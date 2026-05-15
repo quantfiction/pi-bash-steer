@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readConfig } from "./config.js";
 import { loadManifest, type ManifestPolicy } from "./manifest-loader.js";
 import { matchUnsafePattern } from "./matcher.js";
+import { buildPromptAddendum } from "./prompt-addendum.js";
 
 /**
  * pi-verify-guard extension entry point.
@@ -16,7 +17,6 @@ import { matchUnsafePattern } from "./matcher.js";
  *
  * Out of scope for this task (future modules):
  *   - `reason-builder` with a paste-ready process({...}) recipe per target
- *   - `before_agent_start` system-prompt addendum
  *
  * Resolved ROUGH open questions:
  *   - Q-A: manifest field name is `unsafe_patterns` under `[commands_meta.<target>]`.
@@ -98,6 +98,17 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
   });
 
   if (guardLevel !== "off") {
+    pi.on("before_agent_start", async (event) => {
+      if (cachedPolicy === null) return; // fail-safe passthrough
+
+      const addendum = buildPromptAddendum(cachedPolicy);
+      if (addendum.length === 0) return; // defensive no-op
+
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${addendum}`,
+      };
+    });
+
     pi.on("tool_call", async (event, ctx) => {
       if (event.toolName !== "bash") return;
       if (cachedPolicy === null) return; // fail-safe passthrough

@@ -59,6 +59,12 @@ unsafe_patterns = [
   return dir;
 }
 
+async function createEmptyManifestDir(): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "pi-verify-guard-empty-"));
+  await writeFile(path.join(dir, "mise.toml"), "[tasks]\nnoop = \"echo ok\"\n", "utf8");
+  return dir;
+}
+
 const originalVerifyGuard = process.env.PI_VERIFY_GUARD;
 
 afterEach(() => {
@@ -78,6 +84,7 @@ describe("piVerifyGuard", () => {
     await piVerifyGuard(pi);
 
     expect(handlers.get("tool_call")).toBeUndefined();
+    expect(handlers.get("before_agent_start")).toBeUndefined();
     const sessionStart = getOnlyHandler(handlers, "session_start");
     const ctx = createContext(process.cwd());
 
@@ -87,6 +94,64 @@ describe("piVerifyGuard", () => {
       "pi-verify-guard: PI_VERIFY_GUARD=off; verification guard disabled for this session",
       "warning",
     );
+  });
+
+  it("injects a before_agent_start prompt addendum when a manifest is loaded", async () => {
+    process.env.PI_VERIFY_GUARD = "enforce";
+    const cwd = await createManifestDir();
+    const { pi, handlers } = createPiHarness();
+
+    await piVerifyGuard(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "before_agent_start")(
+      { systemPrompt: "BASE" },
+      ctx,
+    );
+
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("BASE\n\nVerification guard addendum"),
+    });
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("[commands_meta.preflight] expected_duration=30m"),
+    });
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining('process({ action: "start", name: "preflight", command: "mise run preflight" })'),
+    });
+  });
+
+  it("does not inject prompt addendum when manifest is absent", async () => {
+    process.env.PI_VERIFY_GUARD = "enforce";
+    const { pi, handlers } = createPiHarness();
+
+    await piVerifyGuard(pi);
+    const ctx = createContext(process.cwd());
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "before_agent_start")(
+      { systemPrompt: "BASE" },
+      ctx,
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("does not inject prompt addendum when manifest has no guarded targets", async () => {
+    process.env.PI_VERIFY_GUARD = "enforce";
+    const cwd = await createEmptyManifestDir();
+    const { pi, handlers } = createPiHarness();
+
+    await piVerifyGuard(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "before_agent_start")(
+      { systemPrompt: "BASE" },
+      ctx,
+    );
+
+    expect(result).toBeUndefined();
   });
 
   it("warns and allows matching bash commands when PI_VERIFY_GUARD=warn", async () => {

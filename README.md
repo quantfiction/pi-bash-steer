@@ -5,9 +5,9 @@ direct invocation of long-running verification commands (lint, typecheck, test,
 build, preflight) from the agent's bash tool, and redirects agents to the
 `process()` tool provided by [`@aliou/pi-processes`](https://github.com/aliou/pi-processes).
 
-> **Status**: core implemented (manifest loader + matcher + tool_call
-> listener). Tests, `PI_VERIFY_GUARD` env-var enforcement levels, and the
-> `before_agent_start` prompt addendum are tracked as follow-up tasks.
+> **Status**: core implemented and tested (manifest loader + matcher +
+> `tool_call` guard + `before_agent_start` prompt addendum +
+> `PI_VERIFY_GUARD` enforce/warn/off levels).
 > See `docs/plans/agent-verification-infra/verification-as-first-class-action/ROUGH.md`
 > in the MindHive repo for design.
 
@@ -59,10 +59,13 @@ canonical `process({...})` invocation.
 
 ## Status
 
-Core extension shipped: `manifest-loader`, `matcher`, and the `tool_call`
-listener that blocks bash commands matching `unsafe_patterns`. The
-`PI_VERIFY_GUARD` env var is documented but not yet honored — follow-up
-task (will land before npm publish).
+Extension shipped with tested core behavior:
+
+- `manifest-loader` + `matcher` for `mise.toml [commands_meta.*]`
+- `tool_call` listener that blocks (or warns on) matching bash commands
+- `before_agent_start` listener that injects a system-prompt addendum with
+  active unsafe patterns and per-target `process({...})` guidance
+- `PI_VERIFY_GUARD` enforcement levels (`enforce` | `warn` | `off`)
 
 ## License
 
