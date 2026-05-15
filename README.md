@@ -5,8 +5,10 @@ direct invocation of long-running verification commands (lint, typecheck, test,
 build, preflight) from the agent's bash tool, and redirects agents to the
 `process()` tool provided by [`@aliou/pi-processes`](https://github.com/aliou/pi-processes).
 
-> **Status**: skeleton / pre-implementation. See
-> `docs/plans/agent-verification-infra/verification-as-first-class-action/ROUGH.md`
+> **Status**: core implemented (manifest loader + matcher + tool_call
+> listener). Tests, `PI_VERIFY_GUARD` env-var enforcement levels, and the
+> `before_agent_start` prompt addendum are tracked as follow-up tasks.
+> See `docs/plans/agent-verification-infra/verification-as-first-class-action/ROUGH.md`
 > in the MindHive repo for design.
 
 ## Why
@@ -57,8 +59,10 @@ canonical `process({...})` invocation.
 
 ## Status
 
-Pre-implementation skeleton. Source modules and tests forthcoming per the
-design ROUGH.
+Core extension shipped: `manifest-loader`, `matcher`, and the `tool_call`
+listener that blocks bash commands matching `unsafe_patterns`. The
+`PI_VERIFY_GUARD` env var is documented but not yet honored — follow-up
+task (will land before npm publish).
 
 ## License
 
