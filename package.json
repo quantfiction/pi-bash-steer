@@ -1,0 +1,57 @@
+{
+  "name": "pi-verify-guard",
+  "version": "0.0.0",
+  "description": "Pi extension that blocks direct invocation of long-running verification commands declared in a project's mise.toml [commands_meta.*] manifest, and steers agents to the process() tool instead.",
+  "license": "MIT",
+  "author": "quantfiction",
+  "type": "module",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "verify",
+    "guard",
+    "mise"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quantfiction/pi-verify-guard"
+  },
+  "bugs": {
+    "url": "https://github.com/quantfiction/pi-verify-guard/issues"
+  },
+  "homepage": "https://github.com/quantfiction/pi-verify-guard#readme",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}
