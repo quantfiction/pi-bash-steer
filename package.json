@@ -53,5 +53,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "smol-toml": "^1.6.1"
   }
 }
