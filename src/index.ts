@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readConfig } from "./config.js";
 import { loadManifest, type ManifestPolicy } from "./manifest-loader.js";
 import { matchUnsafePattern } from "./matcher.js";
 
@@ -8,14 +9,14 @@ import { matchUnsafePattern } from "./matcher.js";
  * Scope of this module (per the "Implement extension core" task):
  *   1. Register a `session_start` listener that loads and caches the
  *      project's `mise.toml [commands_meta.*]` manifest once per session.
- *   2. Register a `tool_call` listener on the bash tool that consults
- *      the cached manifest and returns `{ block: true, reason }` when
- *      the command string matches any target's `unsafe_patterns`.
+ *   2. Read PI_VERIFY_GUARD once at extension activation.
+ *   3. Register a `tool_call` listener on the bash tool unless the guard is
+ *      disabled. In enforce mode, matched commands block. In warn mode,
+ *      matched commands notify and run.
  *
  * Out of scope for this task (future modules):
  *   - `reason-builder` with a paste-ready process({...}) recipe per target
  *   - `before_agent_start` system-prompt addendum
- *   - `PI_VERIFY_GUARD` env-var enforcement levels (enforce / warn / off)
  *
  * Resolved ROUGH open questions:
  *   - Q-A: manifest field name is `unsafe_patterns` under `[commands_meta.<target>]`.
@@ -32,12 +33,31 @@ import { matchUnsafePattern } from "./matcher.js";
  *     hide the original command from audit; we block instead.
  */
 export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
+  const guardLevel = readConfig(process.env);
+
   // Session-scoped manifest cache. Loaded once at session_start; never
   // re-read mid-session. A fresh pi session picks up manifest edits.
   let cachedPolicy: ManifestPolicy | null = null;
 
   pi.on("session_start", async (_event, ctx) => {
     cachedPolicy = null;
+    if (guardLevel === "off") {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          "pi-verify-guard: PI_VERIFY_GUARD=off; verification guard disabled for this session",
+          "warning",
+        );
+      }
+      return;
+    }
+
+    if (guardLevel === "warn" && ctx.hasUI) {
+      ctx.ui.notify(
+        "pi-verify-guard: PI_VERIFY_GUARD=warn; matching commands will warn but run",
+        "warning",
+      );
+    }
+
     const result = await loadManifest(ctx.cwd);
     switch (result.status) {
       case "ok":
@@ -77,21 +97,31 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
     }
   });
 
-  pi.on("tool_call", async (event, _ctx) => {
-    if (event.toolName !== "bash") return;
-    if (cachedPolicy === null) return; // fail-safe passthrough
+  if (guardLevel !== "off") {
+    pi.on("tool_call", async (event, ctx) => {
+      if (event.toolName !== "bash") return;
+      if (cachedPolicy === null) return; // fail-safe passthrough
 
-    const command = typeof event.input?.command === "string" ? event.input.command : "";
-    if (command.length === 0) return;
+      const command = typeof event.input?.command === "string" ? event.input.command : "";
+      if (command.length === 0) return;
 
-    const match = matchUnsafePattern(command, cachedPolicy);
-    if (!match.matched) return;
+      const match = matchUnsafePattern(command, cachedPolicy);
+      if (!match.matched) return;
 
-    return {
-      block: true,
-      reason: buildBlockReason(match.target, match.pattern.pattern, match.pattern.warning, match.expectedDuration),
-    };
-  });
+      const reason = buildBlockReason(
+        match.target,
+        match.pattern.pattern,
+        match.pattern.warning,
+        match.expectedDuration,
+      );
+      if (guardLevel === "warn") {
+        if (ctx.hasUI) ctx.ui.notify(reason, "warning");
+        return;
+      }
+
+      return { block: true, reason };
+    });
+  }
 }
 
 /**
