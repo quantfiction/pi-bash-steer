@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readConfig } from "./config.js";
 
 describe("readConfig", () => {
-  it("defaults to enforce when PI_VERIFY_GUARD is unset", () => {
+  it("defaults to enforce when PI_BASH_STEER is unset", () => {
     expect(readConfig({})).toBe("enforce");
   });
 
@@ -11,10 +11,10 @@ describe("readConfig", () => {
     ["warn", "warn"],
     ["off", "off"],
   ] as const)("reads %s", (value, expected) => {
-    expect(readConfig({ PI_VERIFY_GUARD: value })).toBe(expected);
+    expect(readConfig({ PI_BASH_STEER: value })).toBe(expected);
   });
 
   it("falls back to enforce for unknown values", () => {
-    expect(readConfig({ PI_VERIFY_GUARD: "disabled" })).toBe("enforce");
+    expect(readConfig({ PI_BASH_STEER: "disabled" })).toBe("enforce");
   });
 });

@@ -1,11 +1,11 @@
-export type VerifyGuardLevel = "enforce" | "warn" | "off";
+export type BashSteerLevel = "enforce" | "warn" | "off";
 
-export function readConfig(env: NodeJS.ProcessEnv): VerifyGuardLevel {
-  switch (env.PI_VERIFY_GUARD) {
+export function readConfig(env: NodeJS.ProcessEnv): BashSteerLevel {
+  switch (env.PI_BASH_STEER) {
     case "enforce":
     case "warn":
     case "off":
-      return env.PI_VERIFY_GUARD;
+      return env.PI_BASH_STEER;
     default:
       return "enforce";
   }

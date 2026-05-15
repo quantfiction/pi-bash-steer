@@ -5,12 +5,12 @@ import { matchUnsafePattern } from "./matcher.js";
 import { buildPromptAddendum } from "./prompt-addendum.js";
 
 /**
- * pi-verify-guard extension entry point.
+ * pi-bash-steer extension entry point.
  *
  * Scope of this module (per the "Implement extension core" task):
  *   1. Register a `session_start` listener that loads and caches the
  *      project's `mise.toml [commands_meta.*]` manifest once per session.
- *   2. Read PI_VERIFY_GUARD once at extension activation.
+ *   2. Read PI_BASH_STEER once at extension activation.
  *   3. Register a `tool_call` listener on the bash tool unless the guard is
  *      disabled. In enforce mode, matched commands block. In warn mode,
  *      matched commands notify and run.
@@ -32,7 +32,7 @@ import { buildPromptAddendum } from "./prompt-addendum.js";
  *     contract, mutations propagate silently to downstream handlers and
  *     hide the original command from audit; we block instead.
  */
-export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
+export default async function piBashSteer(pi: ExtensionAPI): Promise<void> {
   const guardLevel = readConfig(process.env);
 
   // Session-scoped manifest cache. Loaded once at session_start; never
@@ -44,7 +44,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
     if (guardLevel === "off") {
       if (ctx.hasUI) {
         ctx.ui.notify(
-          "pi-verify-guard: PI_VERIFY_GUARD=off; verification guard disabled for this session",
+          "pi-bash-steer: PI_BASH_STEER=off; bash steering disabled for this session",
           "warning",
         );
       }
@@ -53,7 +53,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
 
     if (guardLevel === "warn" && ctx.hasUI) {
       ctx.ui.notify(
-        "pi-verify-guard: PI_VERIFY_GUARD=warn; matching commands will warn but run",
+        "pi-bash-steer: PI_BASH_STEER=warn; matching commands will warn but run",
         "warning",
       );
     }
@@ -65,7 +65,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
         if (ctx.hasUI) {
           const targetNames = result.policy.targets.map((t) => t.target).join(", ");
           ctx.ui.notify(
-            `pi-verify-guard: ${result.policy.targets.length} target(s) guarded (${targetNames})`,
+            `pi-bash-steer: ${result.policy.targets.length} target(s) steered (${targetNames})`,
             "info",
           );
         }
@@ -73,7 +73,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
       case "no_manifest":
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `pi-verify-guard: no mise.toml found above ${result.searchedFrom}; passing through`,
+            `pi-bash-steer: no mise.toml found above ${result.searchedFrom}; passing through`,
             "info",
           );
         }
@@ -81,7 +81,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
       case "empty":
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `pi-verify-guard: ${result.manifestPath} has no [commands_meta.*] with unsafe_patterns; passing through`,
+            `pi-bash-steer: ${result.manifestPath} has no [commands_meta.*] with unsafe_patterns; passing through`,
             "info",
           );
         }
@@ -89,7 +89,7 @@ export default async function piVerifyGuard(pi: ExtensionAPI): Promise<void> {
       case "error":
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `pi-verify-guard: manifest load error (${result.message}); passing through`,
+            `pi-bash-steer: manifest load error (${result.message}); passing through`,
             "warning",
           );
         }
