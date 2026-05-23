@@ -99,9 +99,11 @@ export default async function piBashSteer(pi: ExtensionAPI): Promise<void> {
 
   if (guardLevel !== "off") {
     pi.on("before_agent_start", async (event) => {
-      if (cachedPolicy === null) return; // fail-safe passthrough
-
-      const addendum = buildPromptAddendum(cachedPolicy);
+      // Universal tool-affinity hints fire regardless of whether the
+      // project has a mise.toml — they are not gated on cachedPolicy.
+      // Per-target sections layer on top when a manifest is loaded.
+      const policy = cachedPolicy ?? { manifestPath: "", targets: [] };
+      const addendum = buildPromptAddendum(policy);
       if (addendum.length === 0) return; // defensive no-op
 
       return {

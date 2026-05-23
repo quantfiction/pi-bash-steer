@@ -111,7 +111,10 @@ describe("piBashSteer", () => {
     );
 
     expect(result).toEqual({
-      systemPrompt: expect.stringContaining("BASE\n\nVerification guard addendum"),
+      systemPrompt: expect.stringContaining("BASE\n\nBash tool-affinity hints (universal):"),
+    });
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("Verification guard addendum"),
     });
     expect(result).toEqual({
       systemPrompt: expect.stringContaining("[commands_meta.preflight] expected_duration=30m"),
@@ -121,7 +124,7 @@ describe("piBashSteer", () => {
     });
   });
 
-  it("does not inject prompt addendum when manifest is absent", async () => {
+  it("injects universal hints (without per-target block) when manifest is absent", async () => {
     process.env.PI_BASH_STEER = "enforce";
     const { pi, handlers } = createPiHarness();
 
@@ -134,10 +137,15 @@ describe("piBashSteer", () => {
       ctx,
     );
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("BASE\n\nBash tool-affinity hints (universal):"),
+    });
+    // No per-target block when no manifest is loaded.
+    expect((result as { systemPrompt: string }).systemPrompt).not.toContain("[commands_meta.");
+    expect((result as { systemPrompt: string }).systemPrompt).not.toContain("Verification guard addendum");
   });
 
-  it("does not inject prompt addendum when manifest has no guarded targets", async () => {
+  it("injects universal hints (without per-target block) when manifest has no guarded targets", async () => {
     process.env.PI_BASH_STEER = "enforce";
     const cwd = await createEmptyManifestDir();
     const { pi, handlers } = createPiHarness();
@@ -151,7 +159,11 @@ describe("piBashSteer", () => {
       ctx,
     );
 
-    expect(result).toBeUndefined();
+    expect(result).toEqual({
+      systemPrompt: expect.stringContaining("BASE\n\nBash tool-affinity hints (universal):"),
+    });
+    expect((result as { systemPrompt: string }).systemPrompt).not.toContain("[commands_meta.");
+    expect((result as { systemPrompt: string }).systemPrompt).not.toContain("Verification guard addendum");
   });
 
   it("warns and allows matching bash commands when PI_BASH_STEER=warn", async () => {

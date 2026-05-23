@@ -73,6 +73,11 @@ Extension shipped with tested core behavior:
 - `tool_call` listener that blocks (or warns on) matching bash commands
 - `before_agent_start` listener that injects a system-prompt addendum with
   active unsafe patterns and per-target `process({...})` guidance
+- Universal tool-affinity hints in the addendum (independent of
+  `[commands_meta.*]`) steering bash `find` / `grep -r` / `cat` /
+  `ls -R` and vague semantic queries toward pi's `find` / `grep` /
+  `read` tools, `rg` / `rg --files`, and `code_search`. Fires even
+  in projects without a `mise.toml`.
 - `PI_BASH_STEER` enforcement levels (`enforce` | `warn` | `off`)
 
 ## Composition with other extensions
@@ -95,10 +100,6 @@ with extensions that inspect the original command verbatim.
 
 ## Roadmap
 
-- **Strengthen prompt addendum** with universal tool-affinity hints:
-  bash `find` → pi `find` / `code_search` / `rg --files`; bash `grep -r`
-  → pi `grep` / `rg`; bash `cat` → pi `read`. Prose-level steering ships
-  first, before enforcement.
 - **Token-level matching** (replace substring `includes` with
   `shell-quote`-based argv tokenization) to remove false positives like
   `pnpm test:run -- single.test.ts` matching a broad `pnpm test:run`

@@ -3,13 +3,53 @@ import type { ManifestPolicy } from "./manifest-loader.js";
 import { buildPromptAddendum } from "./prompt-addendum.js";
 
 describe("buildPromptAddendum", () => {
-  it("returns empty when there are zero targets", () => {
+  it("emits universal tool-affinity hints when there are zero targets", () => {
     const policy: ManifestPolicy = {
       manifestPath: "/tmp/mise.toml",
       targets: [],
     };
 
-    expect(buildPromptAddendum(policy)).toBe("");
+    const output = buildPromptAddendum(policy);
+
+    // Header present.
+    expect(output).toContain("Bash tool-affinity hints (universal):");
+
+    // Each universal anti-pattern is named.
+    expect(output).toContain("bash `find`");
+    expect(output).toContain("bash `grep -r`");
+    expect(output).toContain("bash `cat <file>`");
+    expect(output).toContain("bash `ls -R`");
+    expect(output).toContain("grep-blasting vague terms");
+
+    // Each preferred alternative is named.
+    expect(output).toContain("`find` tool");
+    expect(output).toContain("`grep` tool");
+    expect(output).toContain("`read` tool");
+    expect(output).toContain("`code_search` if available");
+    expect(output).toContain("rg --files");
+
+    // No per-target block when there are zero targets.
+    expect(output).not.toContain("[commands_meta.");
+  });
+
+  it("emits universal hints before per-target sections", () => {
+    const policy: ManifestPolicy = {
+      manifestPath: "/tmp/mise.toml",
+      targets: [
+        {
+          target: "preflight",
+          unsafePatterns: [{ pattern: "./scripts/preflight.sh" }],
+        },
+      ],
+    };
+
+    const output = buildPromptAddendum(policy);
+
+    const universalIdx = output.indexOf("Bash tool-affinity hints (universal):");
+    const perTargetIdx = output.indexOf("[commands_meta.preflight]");
+
+    expect(universalIdx).toBeGreaterThanOrEqual(0);
+    expect(perTargetIdx).toBeGreaterThan(universalIdx);
   });
 
   it("renders one target with expected_duration and process recipe", () => {
