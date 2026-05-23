@@ -1,0 +1,176 @@
+import { describe, expect, it } from "vitest";
+import {
+  BUILTIN_POLICY,
+  BUILTIN_TARGET_PREFIX,
+  EMPTY_POLICY,
+  isBuiltinTarget,
+  mergePolicies,
+} from "./defaults.js";
+import type { ManifestPolicy } from "./manifest-loader.js";
+
+describe("BUILTIN_POLICY shape invariants", () => {
+  // These invariants exist because:
+  //   - Built-ins have no real `mise run <target>` to fall back to;
+  //     a missing `redirect` would emit a broken recipe.
+  //   - Short command names compared as `substring` would match
+  //     anywhere in a command string (e.g. `find` in `findings.md`),
+  //     causing the cure to be worse than the disease.
+
+  it("has at least one target", () => {
+    expect(BUILTIN_POLICY.targets.length).toBeGreaterThan(0);
+  });
+
+  it("namespaces every target under the built-in prefix", () => {
+    for (const t of BUILTIN_POLICY.targets) {
+      expect(t.target.startsWith(BUILTIN_TARGET_PREFIX)).toBe(true);
+    }
+  });
+
+  it("every built-in pattern carries a redirect (no default mise fallback)", () => {
+    for (const t of BUILTIN_POLICY.targets) {
+      for (const p of t.unsafePatterns) {
+        expect(
+          p.redirect,
+          `target ${t.target}, pattern ${JSON.stringify(p.pattern)} missing redirect`,
+        ).toBeTruthy();
+      }
+    }
+  });
+
+  it("short command names (<=5 chars, no spaces) use command-mode, not substring", () => {
+    // Catches the bug where someone adds `{ pattern: "ls" }` as a
+    // bare-string default and substring-matches half the shell.
+    for (const t of BUILTIN_POLICY.targets) {
+      for (const p of t.unsafePatterns) {
+        const isShortBareWord = p.pattern.length <= 5 && !/\s/.test(p.pattern);
+        if (isShortBareWord) {
+          expect(
+            p.matchMode,
+            `pattern ${JSON.stringify(p.pattern)} must use command mode`,
+          ).toBe("command");
+        }
+      }
+    }
+  });
+
+  it("covers the headline universal footguns", () => {
+    const targets = BUILTIN_POLICY.targets.map((t) => t.target);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}find`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}grep_recursive`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}ls_R`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}tar_create`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}du_root`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}pkg_install`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}docker_build`);
+  });
+
+  it("does not block bare `grep` in command mode (would break pipelines)", () => {
+    // Regression guard for the design decision: `cmd | grep x` is
+    // legitimate, common usage. Only recursive shapes are footguns.
+    const grepTarget = BUILTIN_POLICY.targets.find(
+      (t) => t.target === `${BUILTIN_TARGET_PREFIX}grep_recursive`,
+    );
+    expect(grepTarget).toBeDefined();
+    for (const p of grepTarget!.unsafePatterns) {
+      expect(p.matchMode).toBe("substring");
+      expect(p.pattern).toMatch(/^grep -[rR]| --recursive/);
+    }
+  });
+
+  it("does not include `cat` (no reliable large-file heuristic)", () => {
+    for (const t of BUILTIN_POLICY.targets) {
+      for (const p of t.unsafePatterns) {
+        expect(p.pattern.trim()).not.toBe("cat");
+      }
+    }
+  });
+});
+
+describe("isBuiltinTarget", () => {
+  it("recognizes built-in target names", () => {
+    expect(isBuiltinTarget(`${BUILTIN_TARGET_PREFIX}find`)).toBe(true);
+  });
+
+  it("rejects user-named targets", () => {
+    expect(isBuiltinTarget("find")).toBe(false);
+    expect(isBuiltinTarget("preflight")).toBe(false);
+    expect(isBuiltinTarget("")).toBe(false);
+  });
+});
+
+describe("mergePolicies", () => {
+  const projectFind: ManifestPolicy = {
+    manifestPath: "/p/mise.toml",
+    targets: [
+      {
+        target: `${BUILTIN_TARGET_PREFIX}find`,
+        unsafePatterns: [
+          {
+            pattern: "find",
+            matchMode: "command",
+            redirect: "project-custom find redirect",
+          },
+        ],
+      },
+    ],
+  };
+
+  it("returns built-ins unchanged when project policy is empty", () => {
+    const merged = mergePolicies(BUILTIN_POLICY, EMPTY_POLICY);
+    expect(merged.targets.length).toBe(BUILTIN_POLICY.targets.length);
+    expect(merged.targets.map((t) => t.target)).toEqual(
+      BUILTIN_POLICY.targets.map((t) => t.target),
+    );
+  });
+
+  it("returns project unchanged when built-ins are empty", () => {
+    const project: ManifestPolicy = {
+      manifestPath: "/p/mise.toml",
+      targets: [
+        { target: "preflight", unsafePatterns: [{ pattern: "p", matchMode: "substring" }] },
+      ],
+    };
+    const merged = mergePolicies(EMPTY_POLICY, project);
+    expect(merged.targets.map((t) => t.target)).toEqual(["preflight"]);
+  });
+
+  it("project target with same name replaces the built-in (namespace override)", () => {
+    const merged = mergePolicies(BUILTIN_POLICY, projectFind);
+    const find = merged.targets.find(
+      (t) => t.target === `${BUILTIN_TARGET_PREFIX}find`,
+    );
+    expect(find?.unsafePatterns[0]?.redirect).toBe("project-custom find redirect");
+    // Other built-ins survive.
+    expect(merged.targets.length).toBe(BUILTIN_POLICY.targets.length);
+  });
+
+  it("project-only targets are appended after surviving built-ins", () => {
+    const project: ManifestPolicy = {
+      manifestPath: "/p/mise.toml",
+      targets: [
+        { target: "preflight", unsafePatterns: [{ pattern: "p", matchMode: "substring" }] },
+      ],
+    };
+    const merged = mergePolicies(BUILTIN_POLICY, project);
+    expect(merged.targets.length).toBe(BUILTIN_POLICY.targets.length + 1);
+    expect(merged.targets[merged.targets.length - 1]?.target).toBe("preflight");
+  });
+
+  it("prefers project manifestPath when present", () => {
+    const merged = mergePolicies(BUILTIN_POLICY, projectFind);
+    expect(merged.manifestPath).toBe("/p/mise.toml");
+  });
+
+  it("falls back to builtin manifestPath when project manifestPath is empty", () => {
+    const merged = mergePolicies(BUILTIN_POLICY, EMPTY_POLICY);
+    expect(merged.manifestPath).toBe(BUILTIN_POLICY.manifestPath);
+  });
+
+  it("does not mutate inputs", () => {
+    const builtinSnapshot = JSON.stringify(BUILTIN_POLICY);
+    const projectSnapshot = JSON.stringify(projectFind);
+    mergePolicies(BUILTIN_POLICY, projectFind);
+    expect(JSON.stringify(BUILTIN_POLICY)).toBe(builtinSnapshot);
+    expect(JSON.stringify(projectFind)).toBe(projectSnapshot);
+  });
+});

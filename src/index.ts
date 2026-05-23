@@ -1,5 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readConfig } from "./config.js";
+import { readBuiltinsConfig, readConfig } from "./config.js";
+import {
+  BUILTIN_POLICY,
+  EMPTY_POLICY,
+  isBuiltinTarget,
+  mergePolicies,
+} from "./defaults.js";
 import { loadManifest, type ManifestPolicy } from "./manifest-loader.js";
 import { matchUnsafePattern } from "./matcher.js";
 import { buildPromptAddendum } from "./prompt-addendum.js";
@@ -34,10 +40,14 @@ import { buildPromptAddendum } from "./prompt-addendum.js";
  */
 export default async function piBashSteer(pi: ExtensionAPI): Promise<void> {
   const guardLevel = readConfig(process.env);
+  const builtinsLevel = readBuiltinsConfig(process.env);
 
   // Session-scoped manifest cache. Loaded once at session_start; never
   // re-read mid-session. A fresh pi session picks up manifest edits.
+  // Holds the *merged* policy (built-ins + project mise.toml).
   let cachedPolicy: ManifestPolicy | null = null;
+
+  const builtinPolicy = builtinsLevel === "on" ? BUILTIN_POLICY : EMPTY_POLICY;
 
   pi.on("session_start", async (_event, ctx) => {
     cachedPolicy = null;
@@ -59,40 +69,60 @@ export default async function piBashSteer(pi: ExtensionAPI): Promise<void> {
     }
 
     const result = await loadManifest(ctx.cwd);
+    const projectPolicy = result.status === "ok" ? result.policy : EMPTY_POLICY;
+    const merged = mergePolicies(builtinPolicy, projectPolicy);
+
+    // Set the cache regardless of project-manifest presence so built-ins
+    // fire in manifest-less projects. If both built-ins and project are
+    // empty, cachedPolicy ends up with zero targets and the tool_call
+    // listener short-circuits naturally.
+    cachedPolicy = merged.targets.length > 0 ? merged : null;
+
+    if (!ctx.hasUI) return;
+
+    const builtinCount = merged.targets.filter((t) => isBuiltinTarget(t.target)).length;
+    const projectCount = merged.targets.length - builtinCount;
+
     switch (result.status) {
-      case "ok":
-        cachedPolicy = result.policy;
-        if (ctx.hasUI) {
-          const targetNames = result.policy.targets.map((t) => t.target).join(", ");
+      case "ok": {
+        const targetNames = merged.targets.map((t) => t.target).join(", ");
+        ctx.ui.notify(
+          `pi-bash-steer: ${merged.targets.length} target(s) steered (${projectCount} project + ${builtinCount} built-in) [${targetNames}]`,
+          "info",
+        );
+        return;
+      }
+      case "no_manifest":
+        if (builtinCount > 0) {
           ctx.ui.notify(
-            `pi-bash-steer: ${result.policy.targets.length} target(s) steered (${targetNames})`,
+            `pi-bash-steer: no mise.toml found above ${result.searchedFrom}; ${builtinCount} built-in target(s) active`,
             "info",
           );
-        }
-        return;
-      case "no_manifest":
-        if (ctx.hasUI) {
+        } else {
           ctx.ui.notify(
-            `pi-bash-steer: no mise.toml found above ${result.searchedFrom}; passing through`,
+            `pi-bash-steer: no mise.toml found above ${result.searchedFrom} and built-ins disabled; passing through`,
             "info",
           );
         }
         return;
       case "empty":
-        if (ctx.hasUI) {
+        if (builtinCount > 0) {
           ctx.ui.notify(
-            `pi-bash-steer: ${result.manifestPath} has no [commands_meta.*] with unsafe_patterns; passing through`,
+            `pi-bash-steer: ${result.manifestPath} has no [commands_meta.*] with unsafe_patterns; ${builtinCount} built-in target(s) active`,
+            "info",
+          );
+        } else {
+          ctx.ui.notify(
+            `pi-bash-steer: ${result.manifestPath} has no [commands_meta.*] with unsafe_patterns and built-ins disabled; passing through`,
             "info",
           );
         }
         return;
       case "error":
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `pi-bash-steer: manifest load error (${result.message}); passing through`,
-            "warning",
-          );
-        }
+        ctx.ui.notify(
+          `pi-bash-steer: manifest load error (${result.message}); ${builtinCount} built-in target(s) active`,
+          "warning",
+        );
         return;
     }
   });
@@ -126,6 +156,7 @@ export default async function piBashSteer(pi: ExtensionAPI): Promise<void> {
         match.pattern.pattern,
         match.pattern.warning,
         match.expectedDuration,
+        match.pattern.redirect,
       );
       if (guardLevel === "warn") {
         if (ctx.hasUI) ctx.ui.notify(reason, "warning");
@@ -151,16 +182,28 @@ function buildBlockReason(
   pattern: string,
   warning: string | undefined,
   expectedDuration: string | undefined,
+  redirect: string | undefined,
 ): string {
   const durationNote = expectedDuration ? ` (expected duration ~${expectedDuration})` : "";
+  const builtin = isBuiltinTarget(target);
+  const sourceNote = builtin
+    ? `pi-bash-steer built-in (${target})`
+    : `mise.toml [commands_meta.${target}].unsafe_patterns`;
   const lines = [
-    `Blocked: command matches mise.toml [commands_meta.${target}].unsafe_patterns entry ${JSON.stringify(pattern)}${durationNote}.`,
+    `Blocked: command matches ${sourceNote} entry ${JSON.stringify(pattern)}${durationNote}.`,
   ];
   if (warning) lines.push(warning);
-  lines.push(
-    "Run this as a background process instead. Use the `process` tool from @aliou/pi-processes:",
-    `  process({ action: "start", name: ${JSON.stringify(target)}, command: "mise run ${target}" })`,
-    "Then poll with `process({ action: \"output\", id })` or `process({ action: \"logs\", id })`.",
-  );
+  if (redirect) {
+    // Per-pattern redirect overrides the default mise recipe — used by
+    // built-ins (which have no mise target) and by manifest authors
+    // who want a custom recipe per pattern.
+    lines.push(redirect);
+  } else {
+    lines.push(
+      "Run this as a background process instead. Use the `process` tool from @aliou/pi-processes:",
+      `  process({ action: "start", name: ${JSON.stringify(target)}, command: "mise run ${target}" })`,
+      "Then poll with `process({ action: \"output\", id })` or `process({ action: \"logs\", id })`.",
+    );
+  }
   return lines.join("\n");
 }

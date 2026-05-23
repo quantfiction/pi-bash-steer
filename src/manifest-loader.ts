@@ -49,6 +49,15 @@ export interface UnsafePattern {
   readonly matchMode: MatchMode;
   /** Optional per-pattern warning the manifest author wants surfaced in the block reason. */
   readonly warning?: string;
+  /**
+   * Optional per-pattern redirect recipe. When present, replaces the
+   * default `mise run <target>` background-process template in the
+   * block reason. Used by built-in defaults to point at pi-native
+   * tools (`rg`, `find`, `code_search`, `read`) rather than mise.
+   *
+   * Free-form text — the matcher does not interpret it.
+   */
+  readonly redirect?: string;
 }
 
 export interface TargetPolicy {
@@ -157,7 +166,13 @@ function normalizeUnsafePatterns(value: unknown): UnsafePattern[] {
       if (typeof pattern !== "string" || pattern.length === 0) continue;
       const matchMode = normalizeMatchMode(entry["match_mode"]);
       const warning = stringOrUndefined(entry["warning"]);
-      out.push(warning ? { pattern, matchMode, warning } : { pattern, matchMode });
+      const redirect = stringOrUndefined(entry["redirect"]);
+      const built: UnsafePattern = { pattern, matchMode };
+      out.push({
+        ...built,
+        ...(warning ? { warning } : {}),
+        ...(redirect ? { redirect } : {}),
+      });
     }
   }
   return out;

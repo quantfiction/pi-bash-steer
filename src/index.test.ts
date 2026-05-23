@@ -66,12 +66,18 @@ async function createEmptyManifestDir(): Promise<string> {
 }
 
 const originalBashSteer = process.env.PI_BASH_STEER;
+const originalBuiltins = process.env.PI_BASH_STEER_BUILTINS;
 
 afterEach(() => {
   if (originalBashSteer === undefined) {
     delete process.env.PI_BASH_STEER;
   } else {
     process.env.PI_BASH_STEER = originalBashSteer;
+  }
+  if (originalBuiltins === undefined) {
+    delete process.env.PI_BASH_STEER_BUILTINS;
+  } else {
+    process.env.PI_BASH_STEER_BUILTINS = originalBuiltins;
   }
   vi.restoreAllMocks();
 });
@@ -297,6 +303,196 @@ describe("piBashSteer", () => {
     expect(await handler({ toolName: "bash" }, ctx)).toBeUndefined();
   });
 
+  // ---- Built-in universal-footgun defaults ----
+  //
+  // Acceptance from the task description:
+  //   - A project with no mise.toml still gets `find` / `grep -r`
+  //     blocked when PI_BASH_STEER=enforce.
+  //   - A project that opts out via PI_BASH_STEER_BUILTINS=off behaves
+  //     exactly like today (no built-ins, no manifest = passthrough).
+
+  it("blocks bash `find` in a project with no mise.toml (built-in default)", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    // PI_BASH_STEER_BUILTINS unset — defaults to on.
+    delete process.env.PI_BASH_STEER_BUILTINS;
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-bash-steer-builtins-find-"));
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("pi-bash-steer built-in (__builtins__find)"),
+    });
+    expect((result as { reason: string }).reason).toContain("pi's `find` tool");
+  });
+
+  it("blocks recursive `grep -r` via built-in default", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-bash-steer-builtins-grep-"));
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "grep -r TODO src/" } },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect((result as { reason: string }).reason).toContain(
+      "__builtins__grep_recursive",
+    );
+  });
+
+  it("does NOT block pipeline `cmd | grep x` (only recursive grep is blocked)", async () => {
+    // Regression guard: aggressively blocking all `grep` would break
+    // common, legitimate pipeline usage. Built-ins target the
+    // recursive shape only.
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-bash-steer-builtins-pipe-"));
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "git status | grep modified" } },
+      ctx,
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("PI_BASH_STEER_BUILTINS=off restores pre-builtins behavior (no manifest = passthrough)", async () => {
+    // Acceptance criterion from the task description.
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off";
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-builtins-off-"),
+    );
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const findResult = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+    const grepResult = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "grep -r TODO src/" } },
+      ctx,
+    );
+
+    expect(findResult).toBeUndefined();
+    expect(grepResult).toBeUndefined();
+  });
+
+  it("project mise.toml can override a built-in by namespace target name", async () => {
+    // Verifies the namespace-override merge rule from the design.
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-builtins-override-"),
+    );
+    await writeFile(
+      path.join(cwd, "mise.toml"),
+      `[commands_meta.__builtins__find]
+unsafe_patterns = [
+  { pattern = "find", match_mode = "command", redirect = "CUSTOM_PROJECT_REDIRECT" },
+]
+`,
+      "utf8",
+    );
+
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect((result as { reason: string }).reason).toContain(
+      "CUSTOM_PROJECT_REDIRECT",
+    );
+    // Built-in redirect text must NOT leak through when overridden.
+    expect((result as { reason: string }).reason).not.toContain(
+      "pi's `find` tool",
+    );
+  });
+
+  it("per-pattern redirect on a project pattern overrides the default mise recipe", async () => {
+    // Verifies the new per-pattern `redirect` field on the public schema.
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off"; // isolate to project policy
+
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-redirect-"),
+    );
+    await writeFile(
+      path.join(cwd, "mise.toml"),
+      `[commands_meta.lint]
+unsafe_patterns = [
+  { pattern = "pnpm lint", redirect = "LINT_CUSTOM_RECIPE" },
+]
+`,
+      "utf8",
+    );
+
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "pnpm lint" } },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect((result as { reason: string }).reason).toContain("LINT_CUSTOM_RECIPE");
+    expect((result as { reason: string }).reason).not.toContain("mise run lint");
+  });
+
+  it("project patterns without redirect still get the default mise recipe (backward compat)", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off";
+    const cwd = await createManifestDir(); // no redirect field
+
+    const { pi, handlers } = createPiHarness();
+    await piBashSteer(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "./scripts/preflight.sh" } },
+      ctx,
+    );
+
+    expect((result as { reason: string }).reason).toContain(
+      'process({ action: "start", name: "preflight", command: "mise run preflight" })',
+    );
+  });
+
   it("re-loads the manifest on a second session_start (cache reset)", async () => {
     // Bug this catches: pi can replay session_start with reason "new"
     // or "resume" within the same extension instance. If the cache
@@ -321,8 +517,10 @@ describe("piBashSteer", () => {
     );
     expect(blocked).toMatchObject({ block: true });
 
-    // Second session in a manifest-less cwd: must passthrough, not
-    // re-use the stale policy from the first session.
+    // Second session in a manifest-less cwd: must passthrough the
+    // project's preflight pattern, not re-use the stale policy from
+    // the first session. (Built-ins may still fire on `find` etc.
+    // — we assert specifically that the preflight pattern is gone.)
     const ctx2 = createContext(unguardedCwd);
     await sessionStart({}, ctx2);
     const passed = await toolCall(

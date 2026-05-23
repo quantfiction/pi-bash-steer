@@ -146,4 +146,114 @@ describe("integration: real loader + piBashSteer", () => {
     );
     expect(passed).toBeUndefined();
   });
+
+  it("blocks built-in `find` via the real loader in a project with no mise.toml", async () => {
+    // Real-loader smoke test for the built-in universal-footgun
+    // defaults. Exercises:
+    //   - BUILTIN_POLICY merging when loadManifest returns no_manifest
+    //   - per-pattern `redirect` plumbing through buildBlockReason
+    //   - built-in source attribution in the block reason
+    //   - PI_BASH_STEER_BUILTINS=on (implicit default)
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+
+    // mkdtemp — NO mise.toml written. Built-ins must fire anyway.
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-integration-builtins-"),
+    );
+    const ctx = makeCtx(cwd);
+
+    const eventBus = createEventBus();
+    const result = await discoverAndLoadExtensions(
+      [EXTENSION_ENTRY],
+      cwd,
+      await mkdtemp(path.join(os.tmpdir(), "pi-bash-steer-empty-agent-builtins-")),
+      eventBus,
+    );
+    expect(result.errors).toEqual([]);
+    const extension = result.extensions[0]!;
+
+    await invokeHandlers(extension, "session_start", { reason: "startup" }, ctx);
+
+    // `find .` is the headline acceptance case from the task description.
+    const blockedFind = await invokeHandlers<{ block: boolean; reason: string }>(
+      extension,
+      "tool_call",
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+    expect(blockedFind).toMatchObject({ block: true });
+    expect(blockedFind?.reason).toContain("pi-bash-steer built-in (__builtins__find)");
+    expect(blockedFind?.reason).toContain("pi's `find` tool");
+    // Must NOT fall back to the broken `mise run __builtins__find` recipe.
+    expect(blockedFind?.reason).not.toContain("mise run __builtins__find");
+
+    // Recursive grep is the second headline case.
+    const blockedGrep = await invokeHandlers<{ block: boolean; reason: string }>(
+      extension,
+      "tool_call",
+      { toolName: "bash", input: { command: "grep -r TODO src/" } },
+      ctx,
+    );
+    expect(blockedGrep).toMatchObject({ block: true });
+    expect(blockedGrep?.reason).toContain("__builtins__grep_recursive");
+
+    // Pipeline grep must still pass (regression guard for the design decision).
+    const passedPipeGrep = await invokeHandlers(
+      extension,
+      "tool_call",
+      { toolName: "bash", input: { command: "git status | grep modified" } },
+      ctx,
+    );
+    expect(passedPipeGrep).toBeUndefined();
+
+    // before_agent_start should emit universal hints but NOT a per-target
+    // section for any __builtins__* target (we filter them).
+    const startResult = await invokeHandlers<{ systemPrompt: string }>(
+      extension,
+      "before_agent_start",
+      { systemPrompt: "BASE" },
+      ctx,
+    );
+    expect(startResult?.systemPrompt).toContain("Bash tool-affinity hints (universal):");
+    expect(startResult?.systemPrompt).not.toContain("__builtins__");
+    expect(startResult?.systemPrompt).not.toContain("Verification guard addendum");
+  });
+
+  it("PI_BASH_STEER_BUILTINS=off restores pre-builtins passthrough via the real loader", async () => {
+    // Acceptance criterion: with builtins disabled and no mise.toml,
+    // the extension is a no-op on bash commands (today's behavior).
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off";
+
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-integration-builtins-off-"),
+    );
+    const ctx = makeCtx(cwd);
+
+    const eventBus = createEventBus();
+    const result = await discoverAndLoadExtensions(
+      [EXTENSION_ENTRY],
+      cwd,
+      await mkdtemp(
+        path.join(os.tmpdir(), "pi-bash-steer-empty-agent-builtins-off-"),
+      ),
+      eventBus,
+    );
+    expect(result.errors).toEqual([]);
+    const extension = result.extensions[0]!;
+
+    await invokeHandlers(extension, "session_start", { reason: "startup" }, ctx);
+
+    const passedFind = await invokeHandlers(
+      extension,
+      "tool_call",
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+    expect(passedFind).toBeUndefined();
+
+    // Reset env so subsequent tests aren't affected.
+    delete process.env.PI_BASH_STEER_BUILTINS;
+  });
 });

@@ -1,3 +1,4 @@
+import { isBuiltinTarget } from "./defaults.js";
 import type { ManifestPolicy, TargetPolicy, UnsafePattern } from "./manifest-loader.js";
 
 /**
@@ -19,12 +20,19 @@ export function buildPromptAddendum(policy: ManifestPolicy): string {
   const lines: string[] = [];
   lines.push(...renderUniversalHints());
 
-  if (policy.targets.length > 0) {
+  // Built-in `__builtins__*` targets are deliberately filtered out:
+  // their coverage is already described in the universal hints above,
+  // and listing 7+ synthetic sections would balloon the system prompt
+  // without telling the agent anything new. Block reasons still surface
+  // the per-pattern redirect at point-of-error.
+  const projectTargets = policy.targets.filter((t) => !isBuiltinTarget(t.target));
+
+  if (projectTargets.length > 0) {
     lines.push("");
     lines.push(
       "Verification guard addendum: use process(...) for long-running targets listed in [commands_meta.*].",
     );
-    for (const target of policy.targets) {
+    for (const target of projectTargets) {
       lines.push(renderTargetHeader(target));
       lines.push(...renderPatterns(target.unsafePatterns));
       lines.push(

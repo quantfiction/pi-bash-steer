@@ -96,6 +96,54 @@ describe("buildPromptAddendum", () => {
     expect(output).toContain('name: "test"');
   });
 
+  it("filters out __builtins__* targets from per-target rendering", () => {
+    // Built-ins are surfaced via universal hints + block-time redirect.
+    // Listing 7+ synthetic targets in every system prompt would bloat
+    // the addendum without telling the agent anything new.
+    const policy: ManifestPolicy = {
+      manifestPath: "/tmp/mise.toml",
+      targets: [
+        {
+          target: "__builtins__find",
+          unsafePatterns: [
+            { pattern: "find", matchMode: "command", redirect: "use pi find" },
+          ],
+        },
+        {
+          target: "preflight",
+          unsafePatterns: [
+            { pattern: "./scripts/preflight.sh", matchMode: "substring" },
+          ],
+        },
+      ],
+    };
+
+    const output = buildPromptAddendum(policy);
+
+    expect(output).toContain("[commands_meta.preflight]");
+    expect(output).not.toContain("__builtins__");
+  });
+
+  it("omits the per-target block entirely if only built-in targets are present", () => {
+    const policy: ManifestPolicy = {
+      manifestPath: "<pi-bash-steer builtins>",
+      targets: [
+        {
+          target: "__builtins__find",
+          unsafePatterns: [
+            { pattern: "find", matchMode: "command", redirect: "use pi find" },
+          ],
+        },
+      ],
+    };
+
+    const output = buildPromptAddendum(policy);
+
+    expect(output).toContain("Bash tool-affinity hints (universal):");
+    expect(output).not.toContain("Verification guard addendum");
+    expect(output).not.toContain("__builtins__");
+  });
+
   it("includes per-pattern warnings", () => {
     const policy: ManifestPolicy = {
       manifestPath: "/tmp/mise.toml",
