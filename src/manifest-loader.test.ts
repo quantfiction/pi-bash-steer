@@ -129,7 +129,9 @@ describe("loadManifest", () => {
       const [t] = result.policy.targets;
       expect(t).toBeDefined();
       expect(t!.target).toBe("preflight");
-      expect(t!.unsafePatterns).toEqual([{ pattern: "./scripts/preflight.sh" }]);
+      expect(t!.unsafePatterns).toEqual([
+        { pattern: "./scripts/preflight.sh", matchMode: "substring" },
+      ]);
     }
   });
 
@@ -148,8 +150,58 @@ unsafe_patterns = [
     if (result.status === "ok") {
       const [t] = result.policy.targets;
       expect(t!.unsafePatterns).toEqual([
-        { pattern: "./scripts/preflight.sh", warning: "Use the background recipe." },
+        {
+          pattern: "./scripts/preflight.sh",
+          matchMode: "substring",
+          warning: "Use the background recipe.",
+        },
       ]);
+    }
+  });
+
+  it("parses match_mode = \"command\" on object entries", async () => {
+    // Wiring contract: the matcher relies on this field to switch from
+    // substring containment to argv[0] tokenization. If the loader
+    // silently drops or mistypes it, command-mode patterns regress to
+    // substring matching and the `find` / `findings.md` over-match
+    // returns.
+    const dir = await makeTempDir();
+    await writeManifest(
+      dir,
+      `[commands_meta.find]
+unsafe_patterns = [
+  { pattern = "find", match_mode = "command" },
+  { pattern = "grep", match_mode = "command", warning = "Use code_search." },
+]
+`,
+    );
+    const result = await loadManifest(dir);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const [t] = result.policy.targets;
+      expect(t!.unsafePatterns).toEqual([
+        { pattern: "find", matchMode: "command" },
+        { pattern: "grep", matchMode: "command", warning: "Use code_search." },
+      ]);
+    }
+  });
+
+  it("falls back to substring on unknown match_mode value (typo must not silently disable guard)", async () => {
+    // Catches: a manifest typo like match_mode = "commands" silently
+    // disabling the argv[0] check. Safer to over-block via substring
+    // than to fail open.
+    const dir = await makeTempDir();
+    await writeManifest(
+      dir,
+      `[commands_meta.find]
+unsafe_patterns = [{ pattern = "find", match_mode = "commands" }]
+`,
+    );
+    const result = await loadManifest(dir);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const [t] = result.policy.targets;
+      expect(t!.unsafePatterns).toEqual([{ pattern: "find", matchMode: "substring" }]);
     }
   });
 
@@ -172,9 +224,9 @@ unsafe_patterns = [
     if (result.status === "ok") {
       const [t] = result.policy.targets;
       expect(t!.unsafePatterns).toEqual([
-        { pattern: "pnpm test" },
-        { pattern: "pnpm test:run", warning: "Use process()" },
-        { pattern: "bash scripts/test.sh" },
+        { pattern: "pnpm test", matchMode: "substring" },
+        { pattern: "pnpm test:run", matchMode: "substring", warning: "Use process()" },
+        { pattern: "bash scripts/test.sh", matchMode: "substring" },
       ]);
     }
   });
@@ -199,7 +251,9 @@ unsafe_patterns = [
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       const [t] = result.policy.targets;
-      expect(t!.unsafePatterns).toEqual([{ pattern: "./scripts/preflight.sh" }]);
+      expect(t!.unsafePatterns).toEqual([
+        { pattern: "./scripts/preflight.sh", matchMode: "substring" },
+      ]);
     }
   });
 

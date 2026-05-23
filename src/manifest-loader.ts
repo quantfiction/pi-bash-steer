@@ -15,17 +15,38 @@
  *
  *   unsafe_patterns = ["./scripts/preflight.sh"]
  *   unsafe_patterns = [{ pattern = "pnpm build", warning = "…" }]
+ *   unsafe_patterns = [{ pattern = "find", match_mode = "command" }]
  *
- * Both shapes are normalized to `{ pattern: string; warning?: string }`.
+ * Both shapes are normalized to `{ pattern, matchMode, warning? }`.
+ * Bare-string entries default to `matchMode = "substring"` for backward
+ * compatibility.
  */
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 
+/**
+ * How a pattern's `pattern` string is compared against an incoming bash
+ * command.
+ *
+ *   - "substring": literal `String.prototype.includes` containment. v1
+ *     default. Safe for multi-token patterns like `./scripts/preflight.sh`
+ *     or `pnpm test:run` where the substring uniquely identifies the
+ *     unsafe invocation.
+ *   - "command": pattern is a bare command name (e.g. `find`, `grep`)
+ *     and matches when it appears as argv[0] of any pipeline element
+ *     after env-prefix and wrapper stripping. Use this for short command
+ *     names whose substring would over-match (`find` in `findings.md`).
+ *     See matcher.ts for the full tokenization contract and limitations.
+ */
+export type MatchMode = "substring" | "command";
+
 export interface UnsafePattern {
-  /** Substring that, when contained in a bash command string, triggers a block. */
+  /** Substring or command name compared against the bash command per `matchMode`. */
   readonly pattern: string;
+  /** Comparison mode. Defaults to "substring" for backward compatibility. */
+  readonly matchMode: MatchMode;
   /** Optional per-pattern warning the manifest author wants surfaced in the block reason. */
   readonly warning?: string;
 }
@@ -128,17 +149,27 @@ function normalizeUnsafePatterns(value: unknown): UnsafePattern[] {
   const out: UnsafePattern[] = [];
   for (const entry of value) {
     if (typeof entry === "string") {
-      if (entry.length > 0) out.push({ pattern: entry });
+      if (entry.length > 0) out.push({ pattern: entry, matchMode: "substring" });
       continue;
     }
     if (isRecord(entry)) {
       const pattern = entry["pattern"];
       if (typeof pattern !== "string" || pattern.length === 0) continue;
+      const matchMode = normalizeMatchMode(entry["match_mode"]);
       const warning = stringOrUndefined(entry["warning"]);
-      out.push(warning ? { pattern, warning } : { pattern });
+      out.push(warning ? { pattern, matchMode, warning } : { pattern, matchMode });
     }
   }
   return out;
+}
+
+/**
+ * Normalize the manifest's `match_mode` field. Unknown values fall back to
+ * "substring" (the safe default) rather than rejecting the pattern — a
+ * typo in the manifest must not silently disable a guard.
+ */
+function normalizeMatchMode(value: unknown): MatchMode {
+  return value === "command" ? "command" : "substring";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

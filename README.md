@@ -53,11 +53,35 @@ unsafe_patterns = [
   "scripts/preflight.sh",
   "bash scripts/preflight.sh",
 ]
+
+[commands_meta.find]
+unsafe_patterns = [
+  { pattern = "find", match_mode = "command", warning = "Use pi's find tool." },
+  { pattern = "grep", match_mode = "command", warning = "Use pi's grep / code_search." },
+]
 ```
 
 A bash command from the agent whose `command` string contains any
 `unsafe_patterns` entry is blocked; the block reason directs the agent
 to the canonical `process({...})` invocation.
+
+### Match modes
+
+Each pattern is compared in one of two modes (`match_mode` on object
+entries; bare-string entries default to `substring`):
+
+| Mode | Comparison | When to use |
+|---|---|---|
+| `substring` (default) | `String.prototype.includes` containment | Multi-token patterns where the substring uniquely identifies the unsafe shape (`./scripts/preflight.sh`, `pnpm test:run`). Catches pipes, redirects, `cd dir && cmd`, env prefixes for free. |
+| `command` | argv[0] basename of any pipeline element, with env-prefix and wrapper stripping (shell-quote tokenization) | Short command names whose substring would over-match (`find` appears in `findings.md`, `npm run find-deps`, etc). |
+
+Command mode handles `cd dir && find .`, `FOO=1 find`, `timeout 30 find`,
+`nice -n 10 find`, `xargs find`, `(cd /tmp && find .)`, `echo $(find .)`,
+and `cat <(find .)`. It does **not** see inside `bash -c "find ..."` or
+`eval "..."` (runtime string evaluation is opaque to single-pass
+parsing); add a `command=bash` rule or a substring pattern if you need
+to defend against that shape. See `src/matcher.ts` for the full
+contract.
 
 ## Environment
 
@@ -69,7 +93,9 @@ to the canonical `process({...})` invocation.
 
 Extension shipped with tested core behavior:
 
-- `manifest-loader` + `matcher` for `mise.toml [commands_meta.*]`
+- `manifest-loader` + `matcher` for `mise.toml [commands_meta.*]`,
+  with `substring` (default) and `command` (shell-quote argv
+  tokenization) match modes per pattern
 - `tool_call` listener that blocks (or warns on) matching bash commands
 - `before_agent_start` listener that injects a system-prompt addendum with
   active unsafe patterns and per-target `process({...})` guidance
@@ -100,11 +126,6 @@ with extensions that inspect the original command verbatim.
 
 ## Roadmap
 
-- **Token-level matching** (replace substring `includes` with
-  `shell-quote`-based argv tokenization) to remove false positives like
-  `pnpm test:run -- single.test.ts` matching a broad `pnpm test:run`
-  pattern, and to make command-name patterns like `find` enforceable
-  without flooding the agent with false positives.
 - **Built-in universal footgun defaults** — ship a default policy that
   covers `find`, `grep -r`, `tar` of large archives, etc., with
   redirects to `rg --files`, pi-native tools, and so on. Merges with
