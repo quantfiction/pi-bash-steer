@@ -38,7 +38,7 @@ describe("buildPromptAddendum", () => {
       targets: [
         {
           target: "preflight",
-          unsafePatterns: [{ pattern: "./scripts/preflight.sh" }],
+          unsafePatterns: [{ pattern: "./scripts/preflight.sh", matchMode: "substring" }],
         },
       ],
     };
@@ -60,7 +60,7 @@ describe("buildPromptAddendum", () => {
           target: "preflight",
           expectedDuration: "30m",
           gotchas: "run from repo root",
-          unsafePatterns: [{ pattern: "./scripts/preflight.sh" }],
+          unsafePatterns: [{ pattern: "./scripts/preflight.sh", matchMode: "substring" }],
         },
       ],
     };
@@ -79,11 +79,11 @@ describe("buildPromptAddendum", () => {
       targets: [
         {
           target: "lint",
-          unsafePatterns: [{ pattern: "pnpm lint" }],
+          unsafePatterns: [{ pattern: "pnpm lint", matchMode: "substring" }],
         },
         {
           target: "test",
-          unsafePatterns: [{ pattern: "pnpm test" }],
+          unsafePatterns: [{ pattern: "pnpm test", matchMode: "substring" }],
         },
       ],
     };
@@ -104,7 +104,7 @@ describe("buildPromptAddendum", () => {
           target: "build",
           unsafePatterns: [
             {
-              pattern: "pnpm build",
+              pattern: "pnpm build", matchMode: "substring",
               warning: "This frequently exceeds shell tool timeout.",
             },
           ],

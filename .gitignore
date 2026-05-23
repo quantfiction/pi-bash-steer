@@ -7,3 +7,8 @@ coverage/
 .env.local
 .vitest-cache/
 *.tsbuildinfo
+
+# Pi / workspace scratch files
+.code-index/
+progress.md
+research.md

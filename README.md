@@ -6,10 +6,11 @@ non-blocking alternatives — typically the `process()` tool provided by
 [`@aliou/pi-processes`](https://github.com/aliou/pi-processes), or
 faster native tools.
 
-> **Status**: core implemented and tested (manifest loader + matcher +
-> `tool_call` guard + `before_agent_start` prompt addendum +
-> `PI_BASH_STEER` enforce/warn/off levels). Token-level matching and
-> built-in universal-footgun defaults are on the roadmap.
+> **Status**: core implemented and tested (manifest loader + matcher
+> with `substring` and `command` match modes + `tool_call` guard +
+> `before_agent_start` prompt addendum + `PI_BASH_STEER`
+> enforce/warn/off levels). Built-in universal-footgun defaults are
+> on the roadmap.
 
 > **History**: This package was previously named `pi-verify-guard`. The
 > scope broadened beyond "verification commands" (preflight, test,
@@ -35,7 +36,13 @@ the block reason.
 ## Install
 
 ```sh
-pi install npm:pi-bash-steer
+pi install git:github.com/quantfiction/pi-bash-steer
+```
+
+Or pin to a tag:
+
+```sh
+pi install git:github.com/quantfiction/pi-bash-steer@v0.1.0
 ```
 
 ## Configuration
