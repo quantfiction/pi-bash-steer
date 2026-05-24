@@ -214,7 +214,9 @@ describe("integration: real loader + piBashSteer", () => {
     );
     expect(blockedFind).toMatchObject({ block: true });
     expect(blockedFind?.reason).toContain("pi-bash-steer built-in (__builtins__find)");
-    expect(blockedFind?.reason).toMatch(/(`rg --files <glob>`|`fd <pattern>`|pi's `find` tool)/);
+    expect(blockedFind?.reason).toMatch(
+      /(`rg --files <glob>`|`fd <pattern>`|pi's `find` tool|Avoid broad bash `find`)/,
+    );
     // Must NOT fall back to the broken `mise run __builtins__find` recipe.
     expect(blockedFind?.reason).not.toContain("mise run __builtins__find");
 
