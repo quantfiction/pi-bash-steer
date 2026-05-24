@@ -1,16 +1,17 @@
 # pi-bash-steer
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) extension that
-intercepts long-running bash invocations and steers agents toward
-non-blocking alternatives — typically the `process()` tool provided by
-[`@aliou/pi-processes`](https://github.com/aliou/pi-processes), or
-faster native tools.
+intercepts long-running bash invocations and steers agents toward the
+best available alternative for the current session — pi-native tools,
+fast shell-level search/listing primitives, `process()` from
+[`@aliou/pi-processes`](https://github.com/aliou/pi-processes), or a
+shell-level background fallback.
 
 > **Status**: core implemented and tested (manifest loader + matcher
 > with `substring` and `command` match modes + `tool_call` guard +
 > `before_agent_start` prompt addendum + `PI_BASH_STEER`
 > enforce/warn/off levels + built-in universal-footgun defaults +
-> per-pattern `redirect` schema).
+> per-pattern `redirect` schema + runtime tool-palette detection).
 
 > **History**: This package was previously named `pi-verify-guard`. The
 > scope broadened beyond "verification commands" (preflight, test,
@@ -30,8 +31,11 @@ timeout-retry loops that waste hours per incident. Prose guidance in
 This extension makes the wrong path structurally impossible: a
 `tool_call` listener reads the project's `mise.toml [commands_meta.*]`
 manifest and blocks any bash command matching a target's
-`unsafe_patterns`, returning a paste-ready `process({...})` recipe in
-the block reason.
+`unsafe_patterns`, returning a palette-aware redirect in the block
+reason. Tool-affinity footguns like `find .` and `grep -r` steer to
+better search/listing primitives; genuinely long-running commands steer
+to `process()` when active, then tmux/log polling, then a plain
+background/log fallback.
 
 ## Install
 
@@ -64,14 +68,23 @@ unsafe_patterns = [
 [commands_meta.build]
 unsafe_patterns = [
   { pattern = "pnpm build", warning = "Frequently exceeds shell timeout.",
-    redirect = "process({ action: 'start', name: 'build', command: 'pnpm build' })" },
+    redirect = { kind = "process", recipe = 'process({ action: "start", name: "build", command: "pnpm build" })' } },
+]
+
+[commands_meta.search]
+unsafe_patterns = [
+  { pattern = "find", match_mode = "command",
+    redirect = { kind = "tool", tool = "code_search", recipe = 'code_search({ query: "..." })' } },
+  { pattern = "grep -r",
+    redirect = { kind = "shell", recipe = "rg <pattern> <path>" } },
 ]
 ```
 
 A bash command from the agent whose `command` string contains any
 `unsafe_patterns` entry is blocked; the block reason directs the agent
-to the canonical `process({...})` invocation (or, if the pattern carries
-its own `redirect`, that recipe verbatim).
+to the generated palette-aware redirect, or to the pattern's own
+structured `redirect` descriptor. Legacy string redirects are still
+accepted and rendered verbatim.
 
 ### Per-pattern fields
 
@@ -80,7 +93,16 @@ its own `redirect`, that recipe verbatim).
 | `pattern` | yes | The literal string compared against the bash command per `match_mode`. |
 | `match_mode` | no (default `substring`) | `substring` or `command`. See below. |
 | `warning` | no | Short prose surfaced in the block reason. |
-| `redirect` | no | Custom recipe text that replaces the default `mise run <target>` recipe in the block reason. Use this when the right alternative is *not* `mise run <target>` (e.g. "use `rg --files`", "use the pi `find` tool"). |
+| `redirect` | no | Custom redirect descriptor that replaces the default `mise run <target>` recipe in the block reason. Legacy string redirects are still accepted as free-form prose. |
+
+Redirect descriptors support four `kind` values:
+
+| Kind | Required fields | Purpose |
+|---|---|---|
+| `process` | `recipe` | Recommend the `process` tool / @aliou/pi-processes for long-running work. If `process` is inactive, the block reason says so and still shows the intended recipe. |
+| `tool` | `tool`, `recipe` | Recommend a pi-native tool such as `read`, `find`, `grep`, `ls`, or `code_search`. The block reason checks whether the named tool is active/registered in the current session. |
+| `shell` | `recipe` | Recommend a different shell command, e.g. `rg`, `fd`, or a narrow project script. |
+| `prose` | `text` | Free-form guidance only, with no executable recipe. |
 
 ### Match modes
 
@@ -108,13 +130,13 @@ that are universal across projects — it fires even when there is no
 
 | Target (namespaced) | Patterns | Redirect |
 |---|---|---|
-| `__builtins__find` | `find` (command mode) | pi's `find` tool / `code_search` / `rg --files` |
-| `__builtins__grep_recursive` | `grep -r`, `grep -R`, `grep --recursive` | pi's `grep` tool / `rg <pattern>` |
-| `__builtins__ls_R` | `ls -R` | `rg --files` |
-| `__builtins__tar_create` | `tar -c`, `tar c` | `process({...})` |
-| `__builtins__du_root` | `du -sh /`, `du -h /`, `du -sh ~`, `du -h ~` | scope the path or use `process({...})` |
-| `__builtins__pkg_install` | `npm install`, `pnpm install`, `yarn install` | `process({...})` |
-| `__builtins__docker_build` | `docker build` | `process({...})` |
+| `__builtins__find` | `find` (command mode) | pi `find` if active; else `rg --files`; else `fd`; else scoped/pruned shell prose |
+| `__builtins__grep_recursive` | `grep -r`, `grep -R`, `grep --recursive` | pi `grep` if active; else `rg <pattern>`; else scoped/pruned shell prose |
+| `__builtins__ls_R` | `ls -R` | `rg --files`; else `fd`; else pi `find`; else scoped prose |
+| `__builtins__tar_create` | `tar -c`, `tar c` | `process()` if active; else tmux + log polling; else background job + log polling |
+| `__builtins__du_root` | `du -sh /`, `du -h /`, `du -sh ~`, `du -h ~` | scope the path first; for genuine full scans, `process()`/tmux/background fallback if available |
+| `__builtins__pkg_install` | `npm install`, `pnpm install`, `yarn install` | `process()` if active; else tmux + log polling; else background job + log polling |
+| `__builtins__docker_build` | `docker build` | `process()` if active; else tmux + log polling; else background job + log polling |
 
 Pipeline grep (`cmd | grep x`) is **not** blocked — only the recursive
 on-disk shape is the actual footgun. Bare `cat` is also not blocked
@@ -157,20 +179,23 @@ Extension shipped with tested core behavior:
   tokenization) match modes per pattern
 - `tool_call` listener that blocks (or warns on) matching bash commands
 - `before_agent_start` listener that injects a system-prompt addendum with
-  active unsafe patterns and per-target `process({...})` guidance
+  active unsafe patterns and per-target palette-aware guidance
 - Universal tool-affinity hints in the addendum (independent of
   `[commands_meta.*]`) steering bash `find` / `grep -r` / `cat` /
-  `ls -R` and vague semantic queries toward pi's `find` / `grep` /
-  `read` tools, `rg` / `rg --files`, and `code_search`. Fires even
-  in projects without a `mise.toml`.
+  `ls -R` and vague semantic queries only toward tools/binaries that
+  are actually active or detected in the current session. Fires even in
+  projects without a `mise.toml`.
 - Built-in universal-footgun defaults (`find`, `grep -r`, `ls -R`,
   `tar -c`, `du -sh /`, `npm/pnpm/yarn install`, `docker build`)
   that *block* the footgun shapes, not just steer in prose. Merge
   with the project's `mise.toml`; namespace-override on collision;
   wholesale opt-out via `PI_BASH_STEER_BUILTINS=off`.
 - Per-pattern `redirect` schema field — each `unsafe_patterns` entry
-  can carry its own redirect recipe instead of the default
-  `mise run <target>` template.
+  can carry its own redirect recipe instead of the generated
+  palette-aware default.
+- Runtime tool-palette detection at `session_start`: active pi tools
+  (`process`, `code_search`, `find`, `grep`, `read`) plus bounded shell
+  probes for `rg`, `fd`/`fdfind`, and `tmux`.
 - `PI_BASH_STEER` enforcement levels (`enforce` | `warn` | `off`)
 
 ## Composition with other extensions
@@ -182,7 +207,7 @@ bash-interception ecosystem. Stack them:
 
 | Axis | Use | Composes with pi-bash-steer how |
 |---|---|---|
-| Process model | [`@aliou/pi-processes`](https://github.com/aliou/pi-processes) provides the `process()` tool | pi-bash-steer's block reasons reference `process({...})` directly; recommend installing both together |
+| Process model | [`@aliou/pi-processes`](https://github.com/aliou/pi-processes) provides the `process()` tool | pi-bash-steer's process-model block reasons reference `process({...})` when the tool is active; otherwise they fall back to tmux/log polling or background/log polling |
 | Safety | [`@aliou/pi-guardrails`](https://github.com/aliou/pi-guardrails) blocks dangerous commands (`rm -rf`, `sudo`, etc.) | Runs alongside; `tool_call` event listeners coexist. Dangerous-command blocks fire on their own contract; pi-bash-steer fires on its own. |
 | Token cost | [`pi-lean-ctx`](https://github.com/yvgude/lean-ctx) compresses shell output | Runs downstream of pi-bash-steer at tool-execution time. No conflict. |
 | Permission policy | [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-permission-system) provides allow/ask/deny | Runs alongside; different concern (policy vs. tool routing). |
@@ -193,10 +218,6 @@ with extensions that inspect the original command verbatim.
 
 ## Roadmap
 
-- **Tool-palette detection** — introspect registered tools at
-  `session_start` and tune redirect recipes to what's actually
-  installed (e.g. only suggest `process({...})` if pi-processes is
-  loaded).
 - **Flag-aware matching** — a third `match_mode` that understands
   flag/positional structure so rules like "block `grep` only when no
   pipeline upstream is present" can be expressed without substring

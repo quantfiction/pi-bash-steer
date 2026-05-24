@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { ManifestPolicy } from "./manifest-loader.js";
 import { buildPromptAddendum } from "./prompt-addendum.js";
+import type { ToolPalette } from "./tool-palette.js";
+
+const FULL_PALETTE: ToolPalette = {
+  registeredToolNames: ["bash", "code_search", "find", "grep", "process", "read"],
+  activeToolNames: ["bash", "code_search", "find", "grep", "process", "read"],
+  hasProcess: true,
+  hasCodeSearch: true,
+  hasNativeFind: true,
+  hasNativeGrep: true,
+  hasNativeRead: true,
+  hasRg: true,
+  hasFd: true,
+  hasTmux: true,
+};
 
 describe("buildPromptAddendum", () => {
   it("emits universal tool-affinity hints when there are zero targets", () => {
@@ -9,7 +23,7 @@ describe("buildPromptAddendum", () => {
       targets: [],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     // Header present.
     expect(output).toContain("Bash tool-affinity hints (universal):");
@@ -25,11 +39,37 @@ describe("buildPromptAddendum", () => {
     expect(output).toContain("`find` tool");
     expect(output).toContain("`grep` tool");
     expect(output).toContain("`read` tool");
-    expect(output).toContain("`code_search` if available");
+    expect(output).toContain("`code_search`");
     expect(output).toContain("rg --files");
 
     // No per-target block when there are zero targets.
     expect(output).not.toContain("[commands_meta.");
+  });
+
+  it("omits unavailable tools from universal hints", () => {
+    const policy: ManifestPolicy = {
+      manifestPath: "/tmp/mise.toml",
+      targets: [],
+    };
+    const output = buildPromptAddendum(policy, {
+      ...FULL_PALETTE,
+      activeToolNames: ["bash"],
+      hasProcess: false,
+      hasCodeSearch: false,
+      hasNativeFind: false,
+      hasNativeGrep: false,
+      hasNativeRead: false,
+      hasRg: true,
+      hasFd: false,
+    });
+
+    expect(output).toContain("`rg --files`");
+    expect(output).toContain("`rg <pattern>`");
+    expect(output).not.toContain("`code_search`");
+    expect(output).not.toContain("the `find` tool");
+    expect(output).not.toContain("the `grep` tool");
+    expect(output).not.toContain("the `read` tool");
+    expect(output).not.toContain("process(");
   });
 
   it("emits universal hints before per-target sections", () => {
@@ -43,13 +83,35 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     const universalIdx = output.indexOf("Bash tool-affinity hints (universal):");
     const perTargetIdx = output.indexOf("[commands_meta.preflight]");
 
     expect(universalIdx).toBeGreaterThanOrEqual(0);
     expect(perTargetIdx).toBeGreaterThan(universalIdx);
+  });
+
+  it("renders tmux recipe for a target when process is unavailable", () => {
+    const policy: ManifestPolicy = {
+      manifestPath: "/tmp/mise.toml",
+      targets: [
+        {
+          target: "preflight",
+          unsafePatterns: [{ pattern: "./scripts/preflight.sh", matchMode: "substring" }],
+        },
+      ],
+    };
+
+    const output = buildPromptAddendum(policy, {
+      ...FULL_PALETTE,
+      hasProcess: false,
+      hasTmux: true,
+    });
+
+    expect(output).toContain("tmux recipe:");
+    expect(output).toContain("tmux new-session");
+    expect(output).not.toContain("process recipe:");
   });
 
   it("renders one target with expected_duration and process recipe", () => {
@@ -65,12 +127,46 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     expect(output).toContain("[commands_meta.preflight]");
     expect(output).toContain("expected_duration=30m");
     expect(output).toContain("\"./scripts/preflight.sh\"");
     expect(output).toContain('process({ action: "start", name: "preflight", command: "mise run preflight" })');
+  });
+
+  it("renders per-pattern redirects and omits default target recipe when every pattern has its own redirect", () => {
+    const policy: ManifestPolicy = {
+      manifestPath: "/tmp/mise.toml",
+      targets: [
+        {
+          target: "search",
+          unsafePatterns: [
+            {
+              pattern: "find",
+              matchMode: "command",
+              redirect: {
+                kind: "tool",
+                tool: "code_search",
+                recipe: 'code_search({ query: "..." })',
+              },
+            },
+            {
+              pattern: "grep -r",
+              matchMode: "substring",
+              redirect: { kind: "shell", recipe: "rg <pattern> <path>" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
+
+    expect(output).toContain("[commands_meta.search]");
+    expect(output).toContain('redirect: tool:code_search: code_search({ query: "..." })');
+    expect(output).toContain("redirect: shell: rg <pattern> <path>");
+    expect(output).not.toContain("mise run search");
   });
 
   it("renders multiple targets", () => {
@@ -88,7 +184,7 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     expect(output).toContain("[commands_meta.lint]");
     expect(output).toContain("[commands_meta.test]");
@@ -118,7 +214,7 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     expect(output).toContain("[commands_meta.preflight]");
     expect(output).not.toContain("__builtins__");
@@ -137,7 +233,7 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     expect(output).toContain("Bash tool-affinity hints (universal):");
     expect(output).not.toContain("Verification guard addendum");
@@ -160,7 +256,7 @@ describe("buildPromptAddendum", () => {
       ],
     };
 
-    const output = buildPromptAddendum(policy);
+    const output = buildPromptAddendum(policy, FULL_PALETTE);
 
     expect(output).toContain("warning: This frequently exceeds shell tool timeout.");
   });

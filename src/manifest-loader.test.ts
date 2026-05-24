@@ -186,6 +186,73 @@ unsafe_patterns = [
     }
   });
 
+  it("normalizes per-pattern redirect descriptors", async () => {
+    const dir = await makeTempDir();
+    await writeManifest(
+      dir,
+      `[commands_meta.search]
+unsafe_patterns = [
+  { pattern = "find", match_mode = "command", redirect = { kind = "tool", tool = "code_search", recipe = 'code_search({ query: "..." })' } },
+  { pattern = "./scripts/preflight.sh", redirect = { kind = "process", recipe = 'process({ action: "start", name: "preflight", command: "mise run preflight" })' } },
+  { pattern = "grep -r", redirect = { kind = "shell", recipe = "rg <pattern> <path>" } },
+  { pattern = "cat huge.log", redirect = { kind = "prose", text = "Read only the relevant slice." } },
+]
+`,
+    );
+    const result = await loadManifest(dir);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const [t] = result.policy.targets;
+      expect(t!.unsafePatterns).toEqual([
+        {
+          pattern: "find",
+          matchMode: "command",
+          redirect: { kind: "tool", tool: "code_search", recipe: 'code_search({ query: "..." })' },
+        },
+        {
+          pattern: "./scripts/preflight.sh",
+          matchMode: "substring",
+          redirect: {
+            kind: "process",
+            recipe: 'process({ action: "start", name: "preflight", command: "mise run preflight" })',
+          },
+        },
+        {
+          pattern: "grep -r",
+          matchMode: "substring",
+          redirect: { kind: "shell", recipe: "rg <pattern> <path>" },
+        },
+        {
+          pattern: "cat huge.log",
+          matchMode: "substring",
+          redirect: { kind: "prose", text: "Read only the relevant slice." },
+        },
+      ]);
+    }
+  });
+
+  it("preserves legacy string redirects verbatim", async () => {
+    const dir = await makeTempDir();
+    await writeManifest(
+      dir,
+      `[commands_meta.lint]
+unsafe_patterns = [{ pattern = "pnpm lint", redirect = "CUSTOM_REDIRECT" }]
+`,
+    );
+    const result = await loadManifest(dir);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const [t] = result.policy.targets;
+      expect(t!.unsafePatterns).toEqual([
+        {
+          pattern: "pnpm lint",
+          matchMode: "substring",
+          redirect: "CUSTOM_REDIRECT",
+        },
+      ]);
+    }
+  });
+
   it("falls back to substring on unknown match_mode value (typo must not silently disable guard)", async () => {
     // Catches: a manifest typo like match_mode = "commands" silently
     // disabling the argv[0] check. Safer to over-block via substring

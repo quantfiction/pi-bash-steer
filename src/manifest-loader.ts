@@ -11,15 +11,16 @@
  *   - smol-toml (current / maintained TOML parser, Q-B resolution)
  *   - manifest schema: `mise.toml` lines 50–86 (MindHive)
  *
- * The `unsafe_patterns` field accepts two shapes per pattern entry:
+ * The `unsafe_patterns` field accepts a bare-string shape plus object
+ * entries with optional warnings, match modes, and per-pattern redirects:
  *
  *   unsafe_patterns = ["./scripts/preflight.sh"]
  *   unsafe_patterns = [{ pattern = "pnpm build", warning = "…" }]
  *   unsafe_patterns = [{ pattern = "find", match_mode = "command" }]
+ *   unsafe_patterns = [{ pattern = "grep -r", redirect = { kind = "shell", recipe = "rg <pattern> <path>" } }]
  *
- * Both shapes are normalized to `{ pattern, matchMode, warning? }`.
  * Bare-string entries default to `matchMode = "substring"` for backward
- * compatibility.
+ * compatibility and receive the default target-level redirect at block time.
  */
 
 import { promises as fs } from "node:fs";
@@ -41,6 +42,15 @@ import { parse as parseToml } from "smol-toml";
  *     See matcher.ts for the full tokenization contract and limitations.
  */
 export type MatchMode = "substring" | "command";
+export type RedirectKind = "process" | "tool" | "shell" | "prose";
+
+export type RedirectDescriptor =
+  | { readonly kind: "process"; readonly recipe: string }
+  | { readonly kind: "tool"; readonly tool: string; readonly recipe: string }
+  | { readonly kind: "shell"; readonly recipe: string }
+  | { readonly kind: "prose"; readonly text: string };
+
+export type UnsafePatternRedirect = string | RedirectDescriptor;
 
 export interface UnsafePattern {
   /** Substring or command name compared against the bash command per `matchMode`. */
@@ -50,14 +60,11 @@ export interface UnsafePattern {
   /** Optional per-pattern warning the manifest author wants surfaced in the block reason. */
   readonly warning?: string;
   /**
-   * Optional per-pattern redirect recipe. When present, replaces the
-   * default `mise run <target>` background-process template in the
-   * block reason. Used by built-in defaults to point at pi-native
-   * tools (`rg`, `find`, `code_search`, `read`) rather than mise.
-   *
-   * Free-form text — the matcher does not interpret it.
+   * Optional per-pattern redirect. String redirects are legacy free-form
+   * prose. Object redirects are normalized descriptors interpreted by
+   * the block-reason builder.
    */
-  readonly redirect?: string;
+  readonly redirect?: UnsafePatternRedirect;
 }
 
 export interface TargetPolicy {
@@ -166,7 +173,7 @@ function normalizeUnsafePatterns(value: unknown): UnsafePattern[] {
       if (typeof pattern !== "string" || pattern.length === 0) continue;
       const matchMode = normalizeMatchMode(entry["match_mode"]);
       const warning = stringOrUndefined(entry["warning"]);
-      const redirect = stringOrUndefined(entry["redirect"]);
+      const redirect = normalizeRedirect(entry["redirect"]);
       const built: UnsafePattern = { pattern, matchMode };
       out.push({
         ...built,
@@ -185,6 +192,36 @@ function normalizeUnsafePatterns(value: unknown): UnsafePattern[] {
  */
 function normalizeMatchMode(value: unknown): MatchMode {
   return value === "command" ? "command" : "substring";
+}
+
+function normalizeRedirect(value: unknown): UnsafePatternRedirect | undefined {
+  const legacy = stringOrUndefined(value);
+  if (legacy) return legacy;
+  if (!isRecord(value)) return undefined;
+
+  const kind = value["kind"];
+  if (!isRedirectKind(kind)) return undefined;
+
+  switch (kind) {
+    case "process":
+    case "shell": {
+      const recipe = stringOrUndefined(value["recipe"]);
+      return recipe ? { kind, recipe } : undefined;
+    }
+    case "tool": {
+      const tool = stringOrUndefined(value["tool"]);
+      const recipe = stringOrUndefined(value["recipe"]);
+      return tool && recipe ? { kind, tool, recipe } : undefined;
+    }
+    case "prose": {
+      const text = stringOrUndefined(value["text"]) ?? stringOrUndefined(value["recipe"]);
+      return text ? { kind, text } : undefined;
+    }
+  }
+}
+
+function isRedirectKind(value: unknown): value is RedirectKind {
+  return value === "process" || value === "tool" || value === "shell" || value === "prose";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
