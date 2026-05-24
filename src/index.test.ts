@@ -15,13 +15,52 @@ interface TestContext {
   };
 }
 
-function createPiHarness(): { pi: ExtensionAPI; handlers: Map<string, Handler[]> } {
+interface PiHarnessOptions {
+  activeToolNames?: readonly string[];
+  commandExists?: readonly string[];
+}
+
+const DEFAULT_ACTIVE_TOOLS = [
+  "bash",
+  "code_search",
+  "edit",
+  "find",
+  "grep",
+  "process",
+  "read",
+  "write",
+] as const;
+
+function createPiHarness(options: PiHarnessOptions = {}): { pi: ExtensionAPI; handlers: Map<string, Handler[]> } {
   const handlers = new Map<string, Handler[]>();
+  const activeToolNames = [...(options.activeToolNames ?? DEFAULT_ACTIVE_TOOLS)];
+  const commandExists = new Set(options.commandExists ?? ["rg", "fd", "tmux"]);
   const pi = {
     on: vi.fn((eventName: string, handler: Handler) => {
       const existing = handlers.get(eventName) ?? [];
       existing.push(handler);
       handlers.set(eventName, existing);
+    }),
+    getActiveTools: vi.fn(() => activeToolNames),
+    getAllTools: vi.fn(() =>
+      activeToolNames.map((name) => ({
+        name,
+        description: `${name} tool`,
+        parameters: {},
+        sourceInfo: { source: "test" },
+      })),
+    ),
+    exec: vi.fn(async (_command: string, args: string[]) => {
+      const shellCommand = args.join(" ");
+      const name = [...commandExists].find((candidate) =>
+        shellCommand.includes(`command -v ${candidate}`),
+      );
+      return {
+        stdout: name ? `/usr/bin/${name}\n` : "",
+        stderr: "",
+        code: name ? 0 : 1,
+        killed: false,
+      };
     }),
   } as unknown as ExtensionAPI;
 
@@ -332,6 +371,53 @@ describe("piBashSteer", () => {
       reason: expect.stringContaining("pi-bash-steer built-in (__builtins__find)"),
     });
     expect((result as { reason: string }).reason).toContain("pi's `find` tool");
+  });
+
+  it("with no process tool, built-in find suggests shell/native alternatives instead of process", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+    const { pi, handlers } = createPiHarness({
+      activeToolNames: ["bash", "read"],
+      commandExists: ["rg"],
+    });
+    await piBashSteer(pi);
+
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-bash-steer-no-process-find-"));
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect((result as { reason: string }).reason).toContain("`rg --files <glob>`");
+    expect((result as { reason: string }).reason).not.toContain("process({");
+    expect((result as { reason: string }).reason).not.toContain("pi's `find` tool");
+  });
+
+  it("with no process tool, project targets fall back to tmux when tmux exists", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off";
+    const cwd = await createManifestDir();
+    const { pi, handlers } = createPiHarness({
+      activeToolNames: ["bash", "read"],
+      commandExists: ["tmux"],
+    });
+    await piBashSteer(pi);
+    const ctx = createContext(cwd);
+    await getOnlyHandler(handlers, "session_start")({}, ctx);
+
+    const result = await getOnlyHandler(handlers, "tool_call")(
+      { toolName: "bash", input: { command: "./scripts/preflight.sh" } },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ block: true });
+    expect((result as { reason: string }).reason).toContain("tmux new-session");
+    expect((result as { reason: string }).reason).toContain(".pi-bash-steer/preflight.log");
+    expect((result as { reason: string }).reason).not.toContain("process({");
   });
 
   it("blocks recursive `grep -r` via built-in default", async () => {

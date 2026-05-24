@@ -15,12 +15,11 @@
  *   - All non-colliding built-ins survive.
  *
  * Authoring rules for this file (enforced by `defaults.test.ts`):
- *   - Every pattern entry MUST carry a `redirect` so the block reason
- *     never falls back to `mise run __builtins__*` (which doesn't
- *     exist as a real mise target).
  *   - Short command names that would over-match as substrings (e.g.
  *     `find`) MUST use `matchMode: "command"`.
  *   - All targets MUST be namespaced `__builtins__*`.
+ *   - Built-in redirects are generated from the runtime tool palette in
+ *     `reason-builder.ts`; do not hard-code `process(...)` here.
  *
  * Deliberately excluded:
  *   - `cat <file>`: no reliable way to detect "large" from the command
@@ -36,8 +35,6 @@ import type { ManifestPolicy } from "./manifest-loader.js";
 
 export const BUILTIN_TARGET_PREFIX = "__builtins__";
 
-const PROCESS_RECIPE = "Run via process({ action: \"start\", name: \"<job>\", command: \"<your-cmd>\" }) from @aliou/pi-processes; poll with process({ action: \"output\", id }).";
-
 export const BUILTIN_POLICY: ManifestPolicy = {
   manifestPath: "<pi-bash-steer builtins>",
   targets: [
@@ -48,8 +45,6 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "find",
           matchMode: "command",
           warning: "bash `find` is slow on large trees and ignores .gitignore.",
-          redirect:
-            "Use pi's `find` tool (glob-aware, respects .gitignore), `code_search` for semantic queries, or `rg --files <glob>` for raw file enumeration.",
         },
       ],
     },
@@ -61,24 +56,18 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           matchMode: "substring",
           warning:
             "Recursive bash `grep` walks unpruned trees and ignores .gitignore.",
-          redirect:
-            "Use pi's `grep` tool or `rg <pattern>`. Pipeline filtering (`cmd | grep x`) is unchanged \u2014 only recursive disk search is blocked.",
         },
         {
           pattern: "grep -R",
           matchMode: "substring",
           warning:
             "Recursive bash `grep` walks unpruned trees and ignores .gitignore.",
-          redirect:
-            "Use pi's `grep` tool or `rg <pattern>`. Pipeline filtering (`cmd | grep x`) is unchanged \u2014 only recursive disk search is blocked.",
         },
         {
           pattern: "grep --recursive",
           matchMode: "substring",
           warning:
             "Recursive bash `grep` walks unpruned trees and ignores .gitignore.",
-          redirect:
-            "Use pi's `grep` tool or `rg <pattern>`. Pipeline filtering (`cmd | grep x`) is unchanged \u2014 only recursive disk search is blocked.",
         },
       ],
     },
@@ -89,8 +78,6 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "ls -R",
           matchMode: "substring",
           warning: "Recursive `ls -R` floods stdout and ignores .gitignore.",
-          redirect:
-            "Use `rg --files` (respects .gitignore) or pi's `find` tool with a glob pattern.",
         },
       ],
     },
@@ -101,13 +88,11 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "tar -c",
           matchMode: "substring",
           warning: "`tar` create mode is long-running on large trees.",
-          redirect: PROCESS_RECIPE,
         },
         {
           pattern: "tar c",
           matchMode: "substring",
           warning: "`tar` create mode is long-running on large trees.",
-          redirect: PROCESS_RECIPE,
         },
       ],
     },
@@ -118,29 +103,21 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "du -sh /",
           matchMode: "substring",
           warning: "`du -sh /` scans the entire filesystem.",
-          redirect:
-            "Scope to a specific directory (e.g. `du -sh ./node_modules`) or run via process({...}) for unbounded scans.",
         },
         {
           pattern: "du -h /",
           matchMode: "substring",
           warning: "`du -h /` scans the entire filesystem.",
-          redirect:
-            "Scope to a specific directory (e.g. `du -h ./node_modules`) or run via process({...}) for unbounded scans.",
         },
         {
           pattern: "du -sh ~",
           matchMode: "substring",
           warning: "`du -sh ~` scans the entire home directory.",
-          redirect:
-            "Scope to a specific directory or run via process({...}) for unbounded scans.",
         },
         {
           pattern: "du -h ~",
           matchMode: "substring",
           warning: "`du -h ~` scans the entire home directory.",
-          redirect:
-            "Scope to a specific directory or run via process({...}) for unbounded scans.",
         },
       ],
     },
@@ -151,19 +128,16 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "npm install",
           matchMode: "substring",
           warning: "Package install routinely exceeds the bash tool timeout.",
-          redirect: PROCESS_RECIPE,
         },
         {
           pattern: "pnpm install",
           matchMode: "substring",
           warning: "Package install routinely exceeds the bash tool timeout.",
-          redirect: PROCESS_RECIPE,
         },
         {
           pattern: "yarn install",
           matchMode: "substring",
           warning: "Package install routinely exceeds the bash tool timeout.",
-          redirect: PROCESS_RECIPE,
         },
       ],
     },
@@ -174,7 +148,6 @@ export const BUILTIN_POLICY: ManifestPolicy = {
           pattern: "docker build",
           matchMode: "substring",
           warning: "`docker build` routinely exceeds the bash tool timeout.",
-          redirect: PROCESS_RECIPE,
         },
       ],
     },

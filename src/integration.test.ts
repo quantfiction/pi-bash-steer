@@ -7,7 +7,8 @@ import {
   createEventBus,
   discoverAndLoadExtensions,
 } from "@earendil-works/pi-coding-agent";
-import type { Extension } from "@earendil-works/pi-coding-agent";
+import type { Extension, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import piBashSteer from "./index.js";
 
 /**
  * Real-loader integration smoke test.
@@ -57,6 +58,34 @@ unsafe_patterns = [
     "utf8",
   );
   return dir;
+}
+
+async function loadWithActiveTools(activeToolNames: readonly string[]): Promise<Extension> {
+  const handlers = new Map<string, Array<(event: unknown, ctx: MinimalCtx) => unknown>>();
+  const pi = {
+    on: (eventName: string, handler: (event: unknown, ctx: MinimalCtx) => unknown) => {
+      const existing = handlers.get(eventName) ?? [];
+      existing.push(handler);
+      handlers.set(eventName, existing);
+    },
+    getActiveTools: () => [...activeToolNames],
+    getAllTools: () =>
+      activeToolNames.map((name) => ({
+        name,
+        description: `${name} tool`,
+        parameters: {},
+        sourceInfo: { source: "test", path: "<test>", scope: "project", origin: "configured" },
+      })),
+    exec: async (_command: string, args: string[]) => {
+      const shellCommand = args.join(" ");
+      const found = ["rg", "fd", "tmux"].some((name) =>
+        shellCommand.includes(`command -v ${name}`),
+      );
+      return { stdout: "", stderr: "", code: found ? 0 : 1, killed: false };
+    },
+  } as unknown as ExtensionAPI;
+  await piBashSteer(pi);
+  return { handlers } as unknown as Extension;
 }
 
 async function invokeHandlers<T = unknown>(
@@ -135,7 +164,8 @@ describe("integration: real loader + piBashSteer", () => {
       reason: expect.stringContaining("Blocked: command matches"),
     });
     expect(blocked?.reason).toContain("Use the background recipe.");
-    expect(blocked?.reason).toContain('command: "mise run preflight"');
+    expect(blocked?.reason).toContain("mise run preflight");
+    expect(blocked?.reason).not.toContain("process({");
 
     // tool_call on a benign command passes through.
     const passed = await invokeHandlers(
@@ -184,7 +214,7 @@ describe("integration: real loader + piBashSteer", () => {
     );
     expect(blockedFind).toMatchObject({ block: true });
     expect(blockedFind?.reason).toContain("pi-bash-steer built-in (__builtins__find)");
-    expect(blockedFind?.reason).toContain("pi's `find` tool");
+    expect(blockedFind?.reason).toMatch(/(`rg --files <glob>`|`fd <pattern>`|pi's `find` tool)/);
     // Must NOT fall back to the broken `mise run __builtins__find` recipe.
     expect(blockedFind?.reason).not.toContain("mise run __builtins__find");
 
@@ -218,6 +248,61 @@ describe("integration: real loader + piBashSteer", () => {
     expect(startResult?.systemPrompt).toContain("Bash tool-affinity hints (universal):");
     expect(startResult?.systemPrompt).not.toContain("__builtins__");
     expect(startResult?.systemPrompt).not.toContain("Verification guard addendum");
+  });
+
+  it("uses palette-aware project target redirects with and without process", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    process.env.PI_BASH_STEER_BUILTINS = "off";
+    const cwd = await makeGuardedProject();
+
+    const withProcess = await loadWithActiveTools(["bash", "process"]);
+    const withProcessCtx = makeCtx(cwd);
+    await invokeHandlers(withProcess, "session_start", { reason: "startup" }, withProcessCtx);
+    const processBlocked = await invokeHandlers<{ block: boolean; reason: string }>(
+      withProcess,
+      "tool_call",
+      { toolName: "bash", input: { command: "./scripts/preflight.sh" } },
+      withProcessCtx,
+    );
+    expect(processBlocked).toMatchObject({ block: true });
+    expect(processBlocked?.reason).toContain('process({ action: "start", name: "preflight", command: "mise run preflight" })');
+
+    const withoutProcess = await loadWithActiveTools(["bash"]);
+    const withoutProcessCtx = makeCtx(cwd);
+    await invokeHandlers(withoutProcess, "session_start", { reason: "startup" }, withoutProcessCtx);
+    const fallbackBlocked = await invokeHandlers<{ block: boolean; reason: string }>(
+      withoutProcess,
+      "tool_call",
+      { toolName: "bash", input: { command: "./scripts/preflight.sh" } },
+      withoutProcessCtx,
+    );
+    expect(fallbackBlocked).toMatchObject({ block: true });
+    expect(fallbackBlocked?.reason).not.toContain("process({");
+    expect(fallbackBlocked?.reason).toContain(".pi-bash-steer/preflight.log");
+
+    delete process.env.PI_BASH_STEER_BUILTINS;
+  });
+
+  it("uses palette-aware built-in find redirects without pi-processes", async () => {
+    process.env.PI_BASH_STEER = "enforce";
+    delete process.env.PI_BASH_STEER_BUILTINS;
+    const cwd = await mkdtemp(
+      path.join(os.tmpdir(), "pi-bash-steer-integration-palette-find-"),
+    );
+    const extension = await loadWithActiveTools(["bash", "find"]);
+    const ctx = makeCtx(cwd);
+
+    await invokeHandlers(extension, "session_start", { reason: "startup" }, ctx);
+    const blocked = await invokeHandlers<{ block: boolean; reason: string }>(
+      extension,
+      "tool_call",
+      { toolName: "bash", input: { command: "find . -name foo" } },
+      ctx,
+    );
+
+    expect(blocked).toMatchObject({ block: true });
+    expect(blocked?.reason).toContain("pi's `find` tool");
+    expect(blocked?.reason).not.toContain("process({");
   });
 
   it("PI_BASH_STEER_BUILTINS=off restores pre-builtins passthrough via the real loader", async () => {
