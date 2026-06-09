@@ -151,6 +151,54 @@ export const BUILTIN_POLICY: ManifestPolicy = {
         },
       ],
     },
+    {
+      // Block broad-include git staging/commit shapes. Universal footgun
+      // whenever a working tree is shared between concurrent agent
+      // sessions (parallel workspaces, lifecycle worktree, operator
+      // running multiple pi sessions in the same checkout): one
+      // session's commit captures another session's unrelated working-
+      // tree edits, both attributed to the wrong task. Prose
+      // discipline ("explicit paths only") in repo AGENTS.md does not
+      // hold under load.
+      //
+      // Deliberately excluded shape: `git add .` (single-dot path).
+      // In substring mode it false-positives on legitimate explicit-
+      // path commits like `git add ./services/web/src/app.tsx`. Wait
+      // for flag-aware mode (roadmap) before adding it.
+      target: `${BUILTIN_TARGET_PREFIX}git_broad_add`,
+      unsafePatterns: [
+        {
+          pattern: "git add -A",
+          matchMode: "substring",
+          warning:
+            "`git add -A` stages every change in the worktree, including unrelated edits from concurrent agent sessions. Stage explicit paths.",
+        },
+        {
+          pattern: "git add --all",
+          matchMode: "substring",
+          warning:
+            "`git add --all` stages every change in the worktree, including unrelated edits from concurrent agent sessions. Stage explicit paths.",
+        },
+        {
+          pattern: "git commit -a",
+          matchMode: "substring",
+          warning:
+            "`git commit -a` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
+        },
+        {
+          pattern: "git commit --all",
+          matchMode: "substring",
+          warning:
+            "`git commit --all` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
+        },
+        {
+          pattern: "git commit -am",
+          matchMode: "substring",
+          warning:
+            "`git commit -am` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
+        },
+      ],
+    },
   ],
 } as const;
 

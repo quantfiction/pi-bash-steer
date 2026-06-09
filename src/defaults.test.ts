@@ -6,6 +6,7 @@ import {
   isBuiltinTarget,
   mergePolicies,
 } from "./defaults.js";
+import { matchUnsafePattern } from "./matcher.js";
 import type { ManifestPolicy } from "./manifest-loader.js";
 
 describe("BUILTIN_POLICY shape invariants", () => {
@@ -63,6 +64,7 @@ describe("BUILTIN_POLICY shape invariants", () => {
     expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}du_root`);
     expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}pkg_install`);
     expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}docker_build`);
+    expect(targets).toContain(`${BUILTIN_TARGET_PREFIX}git_broad_add`);
   });
 
   it("does not block bare `grep` in command mode (would break pipelines)", () => {
@@ -83,6 +85,61 @@ describe("BUILTIN_POLICY shape invariants", () => {
       for (const p of t.unsafePatterns) {
         expect(p.pattern.trim()).not.toBe("cat");
       }
+    }
+  });
+});
+
+describe("git_broad_add builtin — end-to-end matcher behavior", () => {
+  // Universal-footgun coverage: any of these shapes captures unrelated
+  // working-tree edits when concurrent agent sessions share a checkout.
+  // Tests the integrated matcher so both the defaults entry and the
+  // substring contract are pinned by the same assertion.
+
+  const shouldBlock = [
+    "git add -A",
+    "git add --all",
+    "git add -A src/foo.ts",
+    "cd src && git add -A",
+    "git commit -a",
+    "git commit -am 'wip'",
+    "git commit -a -m 'wip'",
+    "git commit --all",
+    "git commit --all -m 'wip'",
+    "git commit -am \"wip\"",
+  ];
+
+  it.each(shouldBlock)("blocks %j", (command) => {
+    const result = matchUnsafePattern(command, BUILTIN_POLICY);
+    expect(result.matched).toBe(true);
+    if (result.matched) {
+      expect(result.target).toBe(`${BUILTIN_TARGET_PREFIX}git_broad_add`);
+    }
+  });
+
+  // False-positive guard: legitimate explicit-path usage must NOT block.
+  // `git add .` (single-dot) is deliberately excluded from the builtin
+  // (would false-positive on `git add ./services/...`); the substring
+  // patterns we did ship don't false-positive on these shapes.
+  const shouldNotBlock = [
+    "git add src/foo.ts",
+    "git add src/foo.ts src/bar.ts",
+    "git add ./services/web/src/app.tsx",
+    "git add .", // see flag-aware roadmap; v1 substrings don't catch this
+    "git commit -m 'wip'",
+    "git commit --message 'wip'",
+    "git status",
+    "git log --all", // --all on log is fine; only commit/add shape is blocked
+    "git diff --all",
+    "git push --all",
+    "git reset --hard",
+    "git checkout -- .",
+  ];
+
+  it.each(shouldNotBlock)("does not block %j", (command) => {
+    const result = matchUnsafePattern(command, BUILTIN_POLICY);
+    if (result.matched) {
+      // If something else blocks, it must not be git_broad_add.
+      expect(result.target).not.toBe(`${BUILTIN_TARGET_PREFIX}git_broad_add`);
     }
   });
 });

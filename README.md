@@ -137,6 +137,7 @@ that are universal across projects — it fires even when there is no
 | `__builtins__du_root` | `du -sh /`, `du -h /`, `du -sh ~`, `du -h ~` | scope the path first; for genuine full scans, `process()`/tmux/background fallback if available |
 | `__builtins__pkg_install` | `npm install`, `pnpm install`, `yarn install` | `process()` if active; else tmux + log polling; else background job + log polling |
 | `__builtins__docker_build` | `docker build` | `process()` if active; else tmux + log polling; else background job + log polling |
+| `__builtins__git_broad_add` | `git add -A`, `git add --all`, `git commit -a`, `git commit --all`, `git commit -am` | Stage explicit paths instead. Broad-include shapes capture unrelated working-tree edits from concurrent agent sessions sharing a checkout. (`git add .` is omitted pending flag-aware mode — substring would false-positive on `git add ./foo`.) |
 
 Pipeline grep (`cmd | grep x`) is **not** blocked — only the recursive
 on-disk shape is the actual footgun. Bare `cat` is also not blocked
