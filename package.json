@@ -1,6 +1,6 @@
 {
   "name": "pi-bash-steer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Pi extension that intercepts long-running bash invocations (project-declared verification targets, universal footguns like find/grep -r) and steers agents to non-blocking alternatives.",
   "license": "MIT",
   "author": "quantfiction",
