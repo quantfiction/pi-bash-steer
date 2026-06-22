@@ -186,6 +186,35 @@ unsafe_patterns = [
     }
   });
 
+  it("parses match_mode = \"regex\" on object entries", async () => {
+    // Wiring contract: regex mode must round-trip through the loader
+    // so the matcher compiles `pattern` with `new RegExp()`. If the
+    // loader normalizes it to substring, the `\b` flag boundary in
+    // builtins like `git commit --all\b` regresses to literal-string
+    // containment and the `--allow-empty` false-positive returns.
+    const dir = await makeTempDir();
+    await writeManifest(
+      dir,
+      `[commands_meta.git_broad_add]
+unsafe_patterns = [
+  { pattern = "git commit --all\\\\b", match_mode = "regex", warning = "Use explicit paths." },
+]
+`,
+    );
+    const result = await loadManifest(dir);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      const [t] = result.policy.targets;
+      expect(t!.unsafePatterns).toEqual([
+        {
+          pattern: "git commit --all\\b",
+          matchMode: "regex",
+          warning: "Use explicit paths.",
+        },
+      ]);
+    }
+  });
+
   it("normalizes per-pattern redirect descriptors", async () => {
     const dir = await makeTempDir();
     await writeManifest(

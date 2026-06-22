@@ -19,6 +19,16 @@
  *      command names whose substring would over-match
  *      (`find` appears in `findings.md`, `npm run find-deps`, etc).
  *
+ *   3. "regex": pattern is a JavaScript regex source string (no
+ *      delimiters, no flags). Compiled with `new RegExp(pattern)` and
+ *      tested against the raw command. Use this when substring would
+ *      false-positive on flag prefixes — e.g. `git commit --all\b`
+ *      blocks `git commit --all` and `git commit --all -m "x"` but
+ *      not `git commit --allow-empty`. Invalid regex sources fall back
+ *      to substring containment (preserves the cost-asymmetric bias
+ *      toward over-blocking; a manifest typo cannot silently disable
+ *      a guard).
+ *
  * Tokenization contract (command mode):
  *   - Parsing via `shell-quote` (pure JS, no native deps, sync).
  *   - Pipeline element boundaries: `&&`, `||`, `|`, `|&`, `;`, `&`, and
@@ -216,6 +226,17 @@ function patternMatches(command: string, pattern: UnsafePattern): boolean {
       return command.includes(pattern.pattern);
     }
     return names.includes(pattern.pattern);
+  }
+  if (pattern.matchMode === "regex") {
+    let re: RegExp;
+    try {
+      re = new RegExp(pattern.pattern);
+    } catch {
+      // Invalid regex source — fall back to substring to preserve
+      // over-block bias (a manifest typo must not silently disable a guard).
+      return command.includes(pattern.pattern);
+    }
+    return re.test(command);
   }
   // substring mode (default)
   return command.includes(pattern.pattern);

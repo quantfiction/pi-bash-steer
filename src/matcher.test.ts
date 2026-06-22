@@ -308,6 +308,68 @@ describe("matchUnsafePattern — command mode", () => {
     expect(result.matched && result.target).toBe("first");
   });
 
+  describe("regex mode", () => {
+    const GIT_COMMIT_ALL: TargetPolicy = {
+      target: "git_broad_add",
+      unsafePatterns: [
+        { pattern: "git commit --all\\b", matchMode: "regex" },
+      ],
+    };
+
+    it("matches when the regex anchor is satisfied", () => {
+      expect(matchUnsafePattern("git commit --all", policy([GIT_COMMIT_ALL])).matched).toBe(true);
+      expect(
+        matchUnsafePattern("git commit --all -m 'wip'", policy([GIT_COMMIT_ALL])).matched,
+      ).toBe(true);
+    });
+
+    it("does NOT match flag siblings sharing the substring prefix (the bug this mode fixes)", () => {
+      // The whole point of regex mode: `--allow-empty*` are legitimate
+      // flags whose substring collides with `--all`. \b anchors them out.
+      expect(
+        matchUnsafePattern("git commit --allow-empty", policy([GIT_COMMIT_ALL])).matched,
+      ).toBe(false);
+      expect(
+        matchUnsafePattern(
+          "git commit --allow-empty -F /tmp/msg.txt",
+          policy([GIT_COMMIT_ALL]),
+        ).matched,
+      ).toBe(false);
+      expect(
+        matchUnsafePattern(
+          "git commit --allow-empty-message -m ''",
+          policy([GIT_COMMIT_ALL]),
+        ).matched,
+      ).toBe(false);
+      expect(
+        matchUnsafePattern("git commit --allow-empty-author", policy([GIT_COMMIT_ALL])).matched,
+      ).toBe(false);
+    });
+
+    it("falls back to substring containment when the regex source is invalid", () => {
+      // Unbalanced `[` is a SyntaxError in `new RegExp()`. The fallback
+      // path should treat the source as a literal substring — preserving
+      // the over-block bias (a manifest typo must not silently disable a
+      // guard).
+      const bad: TargetPolicy = {
+        target: "bad",
+        unsafePatterns: [{ pattern: "git commit [oops", matchMode: "regex" }],
+      };
+      expect(
+        matchUnsafePattern("prefix git commit [oops suffix", policy([bad])).matched,
+      ).toBe(true);
+      expect(matchUnsafePattern("git commit -m 'fine'", policy([bad])).matched).toBe(false);
+    });
+
+    it("is case-sensitive by default (no `i` flag)", () => {
+      // Authors who need case-insensitivity write the character class
+      // explicitly. Documented in matcher.ts / manifest-loader.ts.
+      expect(matchUnsafePattern("GIT COMMIT --all", policy([GIT_COMMIT_ALL])).matched).toBe(
+        false,
+      );
+    });
+  });
+
   // Documented limitations preserved as test.todo for future Q-G review.
   // The substring-only test.todo about token-level matching is now
   // PROMOTED — see the command-mode tests above.

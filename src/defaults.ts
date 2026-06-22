@@ -165,35 +165,44 @@ export const BUILTIN_POLICY: ManifestPolicy = {
       // In substring mode it false-positives on legitimate explicit-
       // path commits like `git add ./services/web/src/app.tsx`. Wait
       // for flag-aware mode (roadmap) before adding it.
+      //
+      // Patterns use `matchMode: "regex"` with `\b` flag boundaries so
+      // legitimate flag siblings (e.g. `git commit --allow-empty`,
+      // `--allow-empty-message`, `--allow-empty-author`) do not
+      // false-positive on the `--all` substring. Plain substring
+      // matching shipped originally and was reported to block
+      // `git commit --allow-empty` (a canonical idiom for empty marker
+      // commits); the regex anchor is the minimum surface change that
+      // fixes the FP without giving up the universal-footgun coverage.
       target: `${BUILTIN_TARGET_PREFIX}git_broad_add`,
       unsafePatterns: [
         {
-          pattern: "git add -A",
-          matchMode: "substring",
+          pattern: "git add -A\\b",
+          matchMode: "regex",
           warning:
             "`git add -A` stages every change in the worktree, including unrelated edits from concurrent agent sessions. Stage explicit paths.",
         },
         {
-          pattern: "git add --all",
-          matchMode: "substring",
+          pattern: "git add --all\\b",
+          matchMode: "regex",
           warning:
             "`git add --all` stages every change in the worktree, including unrelated edits from concurrent agent sessions. Stage explicit paths.",
         },
         {
-          pattern: "git commit -a",
-          matchMode: "substring",
+          pattern: "git commit -a\\b",
+          matchMode: "regex",
           warning:
             "`git commit -a` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
         },
         {
-          pattern: "git commit --all",
-          matchMode: "substring",
+          pattern: "git commit --all\\b",
+          matchMode: "regex",
           warning:
             "`git commit --all` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
         },
         {
-          pattern: "git commit -am",
-          matchMode: "substring",
+          pattern: "git commit -am\\b",
+          matchMode: "regex",
           warning:
             "`git commit -am` auto-stages every tracked file, including unrelated edits from concurrent agent sessions. Stage explicit paths first, then commit.",
         },

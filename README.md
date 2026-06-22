@@ -8,7 +8,7 @@ fast shell-level search/listing primitives, `process()` from
 shell-level background fallback.
 
 > **Status**: core implemented and tested (manifest loader + matcher
-> with `substring` and `command` match modes + `tool_call` guard +
+> with `substring`, `command`, and `regex` match modes + `tool_call` guard +
 > `before_agent_start` prompt addendum + `PI_BASH_STEER`
 > enforce/warn/off levels + built-in universal-footgun defaults +
 > per-pattern `redirect` schema + runtime tool-palette detection).
@@ -91,7 +91,7 @@ accepted and rendered verbatim.
 | Field | Required | Purpose |
 |---|---|---|
 | `pattern` | yes | The literal string compared against the bash command per `match_mode`. |
-| `match_mode` | no (default `substring`) | `substring` or `command`. See below. |
+| `match_mode` | no (default `substring`) | `substring`, `command`, or `regex`. See below. |
 | `warning` | no | Short prose surfaced in the block reason. |
 | `redirect` | no | Custom redirect descriptor that replaces the default `mise run <target>` recipe in the block reason. Legacy string redirects are still accepted as free-form prose. |
 
@@ -106,13 +106,14 @@ Redirect descriptors support four `kind` values:
 
 ### Match modes
 
-Each pattern is compared in one of two modes (`match_mode` on object
+Each pattern is compared in one of three modes (`match_mode` on object
 entries; bare-string entries default to `substring`):
 
 | Mode | Comparison | When to use |
 |---|---|---|
 | `substring` (default) | `String.prototype.includes` containment | Multi-token patterns where the substring uniquely identifies the unsafe shape (`./scripts/preflight.sh`, `pnpm test:run`). Catches pipes, redirects, `cd dir && cmd`, env prefixes for free. |
 | `command` | argv[0] basename of any pipeline element, with env-prefix and wrapper stripping (shell-quote tokenization) | Short command names whose substring would over-match (`find` appears in `findings.md`, `npm run find-deps`, etc). |
+| `regex` | JavaScript `RegExp` (pattern is the source, no delimiters / no flags); case-sensitive by default | When substring would false-positive on flag prefixes — e.g. `git commit --all\b` blocks `git commit --all -m "x"` but not `git commit --allow-empty`. Invalid regex sources fall back to substring containment so a manifest typo cannot silently disable a guard. |
 
 Command mode handles `cd dir && find .`, `FOO=1 find`, `timeout 30 find`,
 `nice -n 10 find`, `xargs find`, `(cd /tmp && find .)`, `echo $(find .)`,
@@ -137,7 +138,7 @@ that are universal across projects — it fires even when there is no
 | `__builtins__du_root` | `du -sh /`, `du -h /`, `du -sh ~`, `du -h ~` | scope the path first; for genuine full scans, `process()`/tmux/background fallback if available |
 | `__builtins__pkg_install` | `npm install`, `pnpm install`, `yarn install` | `process()` if active; else tmux + log polling; else background job + log polling |
 | `__builtins__docker_build` | `docker build` | `process()` if active; else tmux + log polling; else background job + log polling |
-| `__builtins__git_broad_add` | `git add -A`, `git add --all`, `git commit -a`, `git commit --all`, `git commit -am` | Stage explicit paths instead. Broad-include shapes capture unrelated working-tree edits from concurrent agent sessions sharing a checkout. (`git add .` is omitted pending flag-aware mode — substring would false-positive on `git add ./foo`.) |
+| `__builtins__git_broad_add` | `git add -A`, `git add --all`, `git commit -a`, `git commit --all`, `git commit -am` (regex mode with `\b` flag boundaries) | Stage explicit paths instead. Broad-include shapes capture unrelated working-tree edits from concurrent agent sessions sharing a checkout. (`git add .` is omitted pending flag-aware mode — substring would false-positive on `git add ./foo`. The `\b` anchor lets legitimate `--allow-empty*` flags pass.) |
 
 Pipeline grep (`cmd | grep x`) is **not** blocked — only the recursive
 on-disk shape is the actual footgun. Bare `cat` is also not blocked
@@ -219,10 +220,11 @@ with extensions that inspect the original command verbatim.
 
 ## Roadmap
 
-- **Flag-aware matching** — a third `match_mode` that understands
+- **Flag-aware matching** — a structured `match_mode` that understands
   flag/positional structure so rules like "block `grep` only when no
-  pipeline upstream is present" can be expressed without substring
-  approximations.
+  pipeline upstream is present" can be expressed without regex
+  approximations. (`regex` mode is the v1 escape hatch — it handles
+  flag-boundary cases via `\b` anchors but doesn't see argv structure.)
 - **`.pi/bash-steer.toml` override file** — deferred (YAGNI). For now,
   built-in overrides live in the project's `mise.toml` under
   `[commands_meta.__builtins__*]`.

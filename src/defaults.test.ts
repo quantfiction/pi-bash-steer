@@ -133,6 +133,14 @@ describe("git_broad_add builtin — end-to-end matcher behavior", () => {
     "git push --all",
     "git reset --hard",
     "git checkout -- .",
+    // Flag-boundary regression: `--allow-empty*` family must NOT match
+    // the `git commit --all` rule. Canonical idiom for empty marker
+    // commits (gate-anchor commits, lifecycle phase boundaries).
+    "git commit --allow-empty",
+    "git commit --allow-empty -F /tmp/msg.txt",
+    "git commit --allow-empty -m 'marker'",
+    "git commit --allow-empty-message -m ''",
+    "git commit --allow-empty-author",
   ];
 
   it.each(shouldNotBlock)("does not block %j", (command) => {

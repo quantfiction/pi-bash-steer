@@ -40,8 +40,14 @@ import { parse as parseToml } from "smol-toml";
  *     after env-prefix and wrapper stripping. Use this for short command
  *     names whose substring would over-match (`find` in `findings.md`).
  *     See matcher.ts for the full tokenization contract and limitations.
+ *   - "regex": pattern is a JavaScript regular-expression source string
+ *     (no surrounding delimiters, no flags). Use this when substring
+ *     would false-positive on flag prefixes (`git commit --all` matching
+ *     `git commit --allow-empty`) — anchor with `\b` to require a flag
+ *     boundary. Invalid regex sources fall back to substring containment
+ *     at match time so a typo cannot silently disable a guard.
  */
-export type MatchMode = "substring" | "command";
+export type MatchMode = "substring" | "command" | "regex";
 export type RedirectKind = "process" | "tool" | "shell" | "prose";
 
 export type RedirectDescriptor =
@@ -191,7 +197,9 @@ function normalizeUnsafePatterns(value: unknown): UnsafePattern[] {
  * typo in the manifest must not silently disable a guard.
  */
 function normalizeMatchMode(value: unknown): MatchMode {
-  return value === "command" ? "command" : "substring";
+  if (value === "command") return "command";
+  if (value === "regex") return "regex";
+  return "substring";
 }
 
 function normalizeRedirect(value: unknown): UnsafePatternRedirect | undefined {
